@@ -68,12 +68,15 @@ async def client_handler(heavy_ai_workload):
                         loop = asyncio.get_running_loop()
                         
                         print("[Main] Offloading AI task to executor thread...")
-                        result_json = await loop.run_in_executor(
+                        result = await loop.run_in_executor(
                             pool, heavy_ai_workload, task_data
                         )
-                        
-                        print(f"[Main] Sending result to server: {result_json}")
-                        encoded = dumps(result_json)
+
+                        print(f"[Main] Sending result to server: {result}", type(result))
+                        encoded = dumps({
+                            "type": "worker_output",
+                            **result
+                        })
                         await websocket.send(encoded)
 
             except (websockets.exceptions.ConnectionClosedError, ConnectionRefusedError) as e:

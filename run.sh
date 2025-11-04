@@ -24,13 +24,13 @@ tmux send-keys -t "$SESSION:distributor" "$DISTRIBUTOR_CMD" C-m
 
 # Create and run the embedding worker
 tmux new-window -t "$SESSION" -n worker_embedding 
-EMBEDDING_CMD="WORKER_TYPE=\"embedding\" MAX_LATENCY_MS=\"10000\" uv run python -m worker_embedding"
+EMBEDDING_CMD="WORKER_TYPE=\"embedding\" MAX_LATENCY_MS=\"5000\" uv run python -m worker_embedding"
 tmux send-keys -t "$SESSION:worker_embedding" "cd \"$PROJECT_DIR/py\" && $EMBEDDING_CMD" C-m
 
 
 # Create and run the general VLM worker
 tmux new-window -t "$SESSION" -n worker_vlm 
-VLM_CMD="WORKER_TYPE=\"vlm\" MAX_LATENCY_MS=\"10000\" uv run python -m worker_vlm"
+VLM_CMD="WORKER_TYPE=\"vlm\" MAX_LATENCY_MS=\"5000\" uv run python -m worker_vlm"
 tmux send-keys -t "$SESSION:worker_vlm" "cd \"$PROJECT_DIR/py\" && $VLM_CMD" C-m
 
 

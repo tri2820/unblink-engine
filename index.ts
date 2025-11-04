@@ -3,11 +3,16 @@ import type { ServerWebSocket } from 'bun';
 import { decode, encode } from 'cbor-x';
 import fs from 'fs';
 import type { EngineReceivedMessage, ServerToEngine } from './shared';
+import { ensureDirExists, FRAMES_DIR } from './appdir';
+import path from 'path';
 
+const FRAME_SIZE_LIMIT = 2 * 1024 * 1024; // 2 MB
 export type Client = {
     id: string;
     ws: ServerWebSocket<unknown>;
-    is_server?: boolean;
+    server_config?: {
+        tenant_id: string;
+    }
     worker_config?: {
         worker_type: string;
         max_batch_size: number;
@@ -16,148 +21,6 @@ export type Client = {
         send_timeout?: NodeJS.Timeout;
     },
 }
-
-
-// async function loopStream(stream_id: string, url: string) {
-//     const messages = forwardStream(url);
-
-//     try {
-//         for await (const msg of messages) {
-//             const now = Date.now();
-//             if (!stream_state[stream_id]) stream_state[stream_id] = {
-//                 agents: {
-//                     'default': {
-//                         name: 'Default Agent',
-//                         role_description: `Describe this drone footage in detailed. Also describe the telemetry data shown in the HUD.`,
-//                         updates: []
-//                     }
-//                 }
-//             };
-//             // Limit to 30 fps per stream
-//             if (now - (stream_state[stream_id]?.last_sent ?? 0) < 1000 / 30) {
-//                 continue;
-//             }
-
-//             stream_state[stream_id].last_sent = now;
-//             // Forward all messages to backend for indexing
-//             // This id is used to identify frames
-//             const id = crypto.randomUUID();
-
-//             if (msg.type === "frame") {
-//                 for (const client of clients.values()) {
-//                     if (client.ws.readyState !== WebSocket.OPEN) continue;
-//                     if (client.worker_config) continue; // Don't send frames to workers
-//                     client.ws.send(createMessage({ type: "frame", stream_id, id }, msg.buffer));
-//                 }
-
-
-//                 // Save every 5 seconds
-//                 if (now - (stream_state[stream_id]?.last_save_file ?? 0) > 5000) {
-//                     // Also send to workers for processing
-
-//                     // Pick random agent
-//                     const agent_id = Object.keys(stream_state[stream_id].agents)[
-//                         Math.floor(Math.random() * Object.keys(stream_state[stream_id].agents).length)
-//                     ];
-//                     const agent = stream_state[stream_id].agents[agent_id];
-//                     if (!agent) return;
-
-//                     const file_path = `/tmp/frame-${id}.jpg`;
-//                     fs.writeFileSync(file_path, msg.buffer as any);
-//                     stream_state[stream_id].last_save_file = now;
-
-//                     console.log("Saved frame to", file_path, "for stream", stream_id, "agent", agent_id);
-//                     // Add to database
-//                     addMediaUnit({
-//                         media_id: stream_id,
-//                         at_time: new Date(),
-//                         description: null,
-//                         embedding: null,
-//                         id,
-//                     });
-
-//                     const image_description_job = {
-//                         messages: [
-//                             {
-//                                 role: 'system',
-//                                 content: [
-//                                     { type: 'text', text: `${agent.role_description}. Do NOT say anything about the image being blurry. Try to describe what looks like inside.` },
-//                                 ]
-//                             },
-//                             {
-//                                 "role": "user",
-//                                 "content": [
-//                                     { "type": "image", "image": file_path },
-//                                 ]
-//                             }
-//                         ]
-//                     };
-
-
-
-
-
-//                     sendJob(image_description_job, 'vlm', {
-//                         async cont(output) {
-//                             console.log("Update database with description");
-//                             updateMediaUnit({
-//                                 id,
-//                                 description: output.description,
-//                             });
-
-//                             clients.forEach(c => {
-//                                 if (c.ws.readyState !== WebSocket.OPEN) return;
-//                                 if (!c.is_browser) return; // Don't send to workers
-//                                 console.log("Sending update to browser", output.description.substring(0, 20), '...');
-//                                 c.ws.send(createMessage({ type: "update", stream_id, id, description: output.description, agent }));
-//                             });
-
-//                             stream_state[stream_id].agents[agent_id].updates = [
-//                                 ...stream_state[stream_id].agents[agent_id].updates,
-//                                 {
-//                                     at_time: Date.now(),
-//                                     description: output.description,
-//                                 }
-//                             ].slice(-20); // Keep last 20 updates
-//                         }
-//                     });
-
-
-
-//                     const embedding_job = { filepath: file_path };
-//                     sendJob(embedding_job, 'embedding', {
-//                         async cont(output) {
-
-//                             console.log("Update database with embedding");
-//                             updateMediaUnit({
-//                                 id,
-//                                 embedding: output.embedding,
-//                             });
-//                         }
-//                     });
-
-
-//                 }
-
-
-//             }
-
-//             // Forward codecpar messages to clients
-//             if (msg.type === "codecpar") {
-//                 stream_state[stream_id].codecpar = msg.data;
-//                 updateStreamState()
-//             }
-
-//         }
-//     } catch (e) {
-//         //   log("Error in stream loop: " + e);
-//     }
-// }
-
-// // Start streaming all cameras
-// Object.entries(streams).forEach(([id, stream]) => {
-//     loopStream(id, (stream as any).uri);
-// });
 
 
 export type JobMap = Map<string, { cont: (result: Record<string, any>) => void }>;
@@ -178,6 +41,7 @@ export function sendJob(job: Record<string, any>, worker_type: string, opts?: {
     // TODO: distribute work for all workers of that worker_type, not just the first one
     const worker = clients.values().find(c => c.worker_config?.worker_type === worker_type);
     if (!worker) return;
+
     worker.worker_config!.gathered.push(job);
     if (worker.worker_config!.send_timeout) clearTimeout(worker.worker_config!.send_timeout);
 
@@ -200,6 +64,7 @@ export function workerFlush(c: Client) {
     const msg = encode({
         inputs
     })
+    console.log("Sending job batch to worker", c.id, 'size', inputs.length);
     c.ws.send(msg);
 }
 
@@ -244,9 +109,9 @@ Bun.serve({
             clients.set(ws, { id, ws, });
         },
         async message(ws, message) {
-            let parsed: EngineReceivedMessage
+            let decoded: EngineReceivedMessage
             try {
-                parsed = decode(message as any);
+                decoded = decode(message as any);
             } catch (error) {
                 console.error("Failed to decode message:", error, message);
                 return;
@@ -255,86 +120,102 @@ Bun.serve({
             if (!client) return;
 
             // === Worker registration and job distribution ===
-            if (parsed.type === "i_am_worker") {
-                if (!parsed.worker_config || !parsed.worker_config.worker_type) {
-                    console.error("Invalid worker_config from worker.", parsed);
+            if (decoded.type === "i_am_worker") {
+                if (!decoded.worker_config || !decoded.worker_config.worker_type) {
+                    console.error("Invalid worker_config from worker.", decoded);
                     return;
                 }
 
-                if (parsed.secret !== process.env.WORKER_SECRET) {
+                if (decoded.secret !== process.env.WORKER_SECRET) {
                     console.error("Invalid WORKER_SECRET from worker.");
                     ws.close(1008, "Invalid WORKER_SECRET");
                     return;
                 }
 
-                console.log('Registered worker', client.id, parsed.worker_config);
+                console.log('Registered worker', client.id, decoded.worker_config);
                 client.worker_config = {
                     max_batch_size: 32,
                     max_latency_ms: 30000,
-                    worker_type: parsed.worker_config.worker_type,
+                    worker_type: decoded.worker_config.worker_type,
                     gathered: [],
                 };
 
-                client.worker_config = { ...client.worker_config, ...parsed.worker_config };
+                client.worker_config = { ...client.worker_config, ...decoded.worker_config };
                 return;
             }
 
-            if (parsed.type === "i_am_server") {
+            if (decoded.type === "i_am_server") {
                 console.log('Registered server client', client.id);
-                client.is_server = true;
+                client.server_config = {
+                    tenant_id: client.id, // For now, use client ID as tenant ID
+                };
 
                 // TODO: validate token if provided
 
-
                 return;
             }
 
-            if (parsed.type === "frame_binary") {
+            if (decoded.type === "frame_binary") {
 
-                console.log("Received frame from server client", client.id, "size", parsed.frame.byteLength);
+                const tenant_id = client.server_config?.tenant_id;
+                if (!tenant_id) {
+                    console.error("Received frame_binary from unauthenticated client.", decoded);
+                    ws.close(1008, "Unauthenticated");
+                    return;
+                }
+
+                if (decoded.frame.byteLength > FRAME_SIZE_LIMIT) {
+                    console.error("Frame size exceeds limit of", FRAME_SIZE_LIMIT, "bytes.");
+                    ws.close(1009, "Frame size exceeds limit");
+                    return;
+                }
+
                 // Create job for processing frame
-                // const file_path = `/tmp/frame-${client.id}-${Date.now()}.jpg`;
-                // fs.writeFileSync(file_path, parsed.frame);
+                const FRAMES_DIR_TENANT = FRAMES_DIR(tenant_id);
+                await ensureDirExists(FRAMES_DIR_TENANT);
+                const file_path = path.join(FRAMES_DIR_TENANT, `${decoded.frame_id}.jpg`);
+                console.log("Received frame from server client", client.id, "size", decoded.frame.byteLength, 'writing to', file_path);
+                fs.writeFileSync(file_path, decoded.frame);
 
-                // const image_description_job = {
-                //     messages: [
-                //         {
-                //             role: 'system',
-                //             content: [
-                //                 { type: 'text', text: `Describe this image in detailed. Do NOT say anything about the image being blurry. Try to describe what looks like inside.` },
-                //             ]
-                //         },
-                //         {
-                //             "role": "user",
-                //             "content": [
-                //                 { "type": "image", "image": file_path },
-                //             ]
-                //         }
-                //     ]
-                // };
+                const image_description_job = {
+                    messages: [
+                        {
+                            role: 'system',
+                            content: [
+                                { type: 'text', text: `Describe this image in detailed. Do NOT say anything about the image being blurry. Try to describe what looks like inside.` },
+                            ]
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                { "type": "image", "image": file_path },
+                            ]
+                        }
+                    ]
+                };
 
-                // sendJob(image_description_job, 'vlm', {
-                //     async cont(output) {
-                //         console.log("Received description for frame", output);
-                //         // clients.forEach(c => {
-                //         //     if (c.ws.readyState !== WebSocket.OPEN) return;
-                //         //     if (!c.is_browser) return; // Don't send to workers
-                //         //     console.log("Sending update to browser", output.description.substring(0, 20), '...');
-                //         //     c.ws.send(createMessage({ type: "update", stream_id, id, description: output.description, agent }));
-                //         // });
-                //     }
-                // });
+                sendJob(image_description_job, 'vlm', {
+                    async cont(output) {
+                        console.log("Received description for frame", output);
+                        // clients.forEach(c => {
+                        //     if (c.ws.readyState !== WebSocket.OPEN) return;
+                        //     if (!c.is_browser) return; // Don't send to workers
+                        //     console.log("Sending update to browser", output.description.substring(0, 20), '...');
+                        //     c.ws.send(createMessage({ type: "update", stream_id, id, description: output.description, agent }));
+                        // });
+                    }
+                });
                 return;
             }
 
-            if (parsed.type === "worker_output") {
+            if (decoded.type === "worker_output") {
                 if (!client.worker_config) {
-                    console.error("Received worker_output from non-worker client.", parsed);
+                    console.error("Received worker_output from non-worker client.", decoded);
                     ws.close(1008, "Not a worker");
                     return;
                 }
 
-                const outputs = parsed.output as any[];
+                const outputs = decoded.output as any[];
                 // Sanity check
                 if (!outputs || !Array.isArray(outputs)) return;
                 for (const output of outputs) {
@@ -344,7 +225,7 @@ Bun.serve({
                 return;
             }
 
-            console.error("Received message from unauthenticated and non-worker client.", parsed);
+            console.error("Received message from unauthenticated and non-worker client.", decoded);
             ws.close(1008, "Unauthenticated");
         },
         close(ws) {

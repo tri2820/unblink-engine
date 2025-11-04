@@ -138,7 +138,7 @@ def load_ai_model():
 
         result = { "output": outputs }
         print("[AI Thread] Heavy AI workload finished.")
-        return json.dumps(result)
+        return result
 
     return worker_function
 

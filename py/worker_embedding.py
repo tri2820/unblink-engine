@@ -147,7 +147,7 @@ def load_ai_model():
             "output": result_embeddings
         }
         print("[Embedding Thread] Embedding workload finished.")
-        return json.dumps(result)
+        return result
             
        
 
