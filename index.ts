@@ -104,7 +104,14 @@ Bun.serve({
                 try {
                     const { text } = await req.json() as { text: string };
                     // Perform autocomplete logic here
-                    return new Response(JSON.stringify({ suggestions: [] }), {
+                    return new Response(JSON.stringify({
+                        items: [
+                            { text: text + ' completion1' },
+                            { text: text + ' completion2' },
+                            { text: text + ' completion3' },
+
+                        ]
+                    }), {
                         status: 200,
                         headers: {
                             "Content-Type": "application/json",
@@ -121,26 +128,34 @@ Bun.serve({
                 }
             }
         },
-        "/api/search": {
+        "/api/worker/fast_embedding": {
             async POST(req) {
-                try {
-                    const { query } = await req.json() as { query: string };
-                    logger.info({ event: 'search_request', query }, 'Received search request');
-                    return new Response(JSON.stringify({ results: [] }), {
-                        status: 200,
-                        headers: {
-                            "Content-Type": "application/json",
-                        }
-                    });
-                } catch (error) {
-                    logger.error({ event: 'search_error', error }, 'Error processing search request');
-                    return new Response(JSON.stringify({ error: 'Invalid request' }), {
+                const { job } = await req.json() as { job: { text: string, prompt_name: string } };
+                if (job.prompt_name !== 'query') {
+                    return new Response(JSON.stringify({ error: 'Invalid prompt_name' }), {
                         status: 400,
                         headers: {
                             "Content-Type": "application/json",
                         }
                     });
                 }
+
+                const result = await new Promise<{ embedding: number[] }>((resolve) => {
+                    sendJob(job, 'fast_embedding', {
+                        cont(output) {
+                            resolve({ embedding: output.embedding });
+                        }
+                    });
+                });
+
+                logger.info({ event: 'fast_embedding', job }, 'Processed fast embedding request');
+
+                return new Response(JSON.stringify(result), {
+                    status: 200,
+                    headers: {
+                        "Content-Type": "application/json",
+                    }
+                });
             }
         },
         "/version": {
