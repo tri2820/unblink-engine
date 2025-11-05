@@ -2,9 +2,10 @@
 import type { ServerWebSocket } from 'bun';
 import { decode, encode } from 'cbor-x';
 import fs from 'fs';
-import type { EngineReceivedMessage, ServerToEngine } from './shared';
+import type { EngineReceivedMessage, EngineToServer, ServerToEngine } from './shared';
 import { ensureDirExists, FRAMES_DIR } from './appdir';
 import path from 'path';
+import { logger } from './logger';
 
 const FRAME_SIZE_LIMIT = 2 * 1024 * 1024; // 2 MB
 export type Client = {
@@ -43,6 +44,11 @@ export function sendJob(job: Record<string, any>, worker_type: string, opts?: {
     if (!worker) return;
 
     worker.worker_config!.gathered.push(job);
+    if (worker.worker_config!.gathered.length > 1000) {
+        console.warn("Worker gathered queue too large, dropping jobs.");
+        worker.worker_config!.gathered = worker.worker_config!.gathered.slice(-1000);
+    }
+
     if (worker.worker_config!.send_timeout) clearTimeout(worker.worker_config!.send_timeout);
 
     if (worker.worker_config!.gathered.length >= (worker.worker_config!.max_batch_size)) {
@@ -64,7 +70,11 @@ export function workerFlush(c: Client) {
     const msg = encode({
         inputs
     })
-    console.log("Sending job batch to worker", c.id, 'size', inputs.length);
+    logger.info({
+        event: 'worker_flush',
+        c_id: c.id,
+        length: inputs.length,
+    }, "Sending job batch to worker");
     c.ws.send(msg);
 }
 
@@ -74,11 +84,10 @@ Bun.serve({
     port,
     async fetch(req, server) {
         const url = new URL(req.url);
-        console.log('HTTP request', req.method, req.url, url.pathname);
 
         // Dedicated endpoint for WebSocket upgrades
         if (url.pathname === "/ws") {
-            console.log('Upgrading to WebSocket');
+            logger.info('Upgrading to WebSocket');
             const upgraded = server.upgrade(req);
             if (upgraded) {
                 // Bun automatically handles the response for successful upgrades
@@ -90,6 +99,50 @@ Bun.serve({
         return new Response("Not Found", { status: 404 });
     },
     routes: {
+        "/api/autocomplete": {
+            async POST(req) {
+                try {
+                    const { text } = await req.json() as { text: string };
+                    // Perform autocomplete logic here
+                    return new Response(JSON.stringify({ suggestions: [] }), {
+                        status: 200,
+                        headers: {
+                            "Content-Type": "application/json",
+                        }
+                    });
+                } catch (error) {
+                    logger.error({ event: 'autocomplete_error', error }, 'Error processing autocomplete request');
+                    return new Response(JSON.stringify({ error: 'Invalid request' }), {
+                        status: 400,
+                        headers: {
+                            "Content-Type": "application/json",
+                        }
+                    });
+                }
+            }
+        },
+        "/api/search": {
+            async POST(req) {
+                try {
+                    const { query } = await req.json() as { query: string };
+                    logger.info({ event: 'search_request', query }, 'Received search request');
+                    return new Response(JSON.stringify({ results: [] }), {
+                        status: 200,
+                        headers: {
+                            "Content-Type": "application/json",
+                        }
+                    });
+                } catch (error) {
+                    logger.error({ event: 'search_error', error }, 'Error processing search request');
+                    return new Response(JSON.stringify({ error: 'Invalid request' }), {
+                        status: 400,
+                        headers: {
+                            "Content-Type": "application/json",
+                        }
+                    });
+                }
+            }
+        },
         "/version": {
             GET() {
                 return new Response(JSON.stringify({ version: "1.0.0" }), {
@@ -132,7 +185,11 @@ Bun.serve({
                     return;
                 }
 
-                console.log('Registered worker', client.id, decoded.worker_config);
+                logger.info({
+                    event: 'worker_registration',
+                    c_id: client.id,
+                    worker_config: decoded.worker_config
+                }, 'Registered worker', client.id, decoded.worker_config);
                 client.worker_config = {
                     max_batch_size: 32,
                     max_latency_ms: 30000,
@@ -145,7 +202,10 @@ Bun.serve({
             }
 
             if (decoded.type === "i_am_server") {
-                console.log('Registered server client', client.id);
+                logger.info({
+                    event: 'server_registration',
+                    c_id: client.id
+                }, 'Registered server client', client.id);
                 client.server_config = {
                     tenant_id: client.id, // For now, use client ID as tenant ID
                 };
@@ -174,7 +234,12 @@ Bun.serve({
                 const FRAMES_DIR_TENANT = FRAMES_DIR(tenant_id);
                 await ensureDirExists(FRAMES_DIR_TENANT);
                 const file_path = path.join(FRAMES_DIR_TENANT, `${decoded.frame_id}.jpg`);
-                console.log("Received frame from server client", client.id, "size", decoded.frame.byteLength, 'writing to', file_path);
+                logger.info({
+                    event: 'frame_received',
+                    c_id: client.id,
+                    size: decoded.frame.byteLength,
+                    file_path
+                });
                 fs.writeFileSync(file_path, decoded.frame);
 
                 const image_description_job = {
@@ -196,13 +261,42 @@ Bun.serve({
 
                 sendJob(image_description_job, 'vlm', {
                     async cont(output) {
-                        console.log("Received description for frame", output);
-                        // clients.forEach(c => {
-                        //     if (c.ws.readyState !== WebSocket.OPEN) return;
-                        //     if (!c.is_browser) return; // Don't send to workers
-                        //     console.log("Sending update to browser", output.description.substring(0, 20), '...');
-                        //     c.ws.send(createMessage({ type: "update", stream_id, id, description: output.description, agent }));
-                        // });
+                        const msg: EngineToServer = {
+                            type: "frame_description",
+                            frame_id: decoded.frame_id,
+                            stream_id: decoded.stream_id,
+                            description: output.description,
+                        }
+                        logger.info({
+                            event: 'frame_description',
+                            c_id: client.id,
+                            msg
+                        });
+                        const encoded = encode(msg);
+                        client.ws.send(encoded);
+                    }
+                });
+
+
+                const image_embedding_job = {
+                    "filepath": file_path
+                }
+
+                sendJob(image_embedding_job, 'embedding', {
+                    async cont(output) {
+                        const msg: EngineToServer = {
+                            type: "frame_embedding",
+                            frame_id: decoded.frame_id,
+                            stream_id: decoded.stream_id,
+                            embedding: output.embedding,
+                        }
+                        logger.info({
+                            event: 'frame_embedding',
+                            c_id: client.id,
+                            msg: '[embedding data]',
+                        });
+                        const encoded = encode(msg);
+                        client.ws.send(encoded);
                     }
                 });
                 return;
@@ -220,7 +314,11 @@ Bun.serve({
                 if (!outputs || !Array.isArray(outputs)) return;
                 for (const output of outputs) {
                     const job = job_map.get(output.id);
-                    job?.cont(output);
+                    if (!job) {
+                        console.error("No job found for worker output ID:", output.id);
+                        continue;
+                    }
+                    job.cont(output);
                 }
                 return;
             }
@@ -234,4 +332,4 @@ Bun.serve({
     }, // handlers
 });
 
-console.log(`Server running on http://localhost:${port}`);
+logger.info(`Server running on http://localhost:${port}`);

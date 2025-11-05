@@ -7,6 +7,19 @@ export type ServerToEngine = {
     type: "i_am_server";
     token?: string;
 }
+
+export type EngineToServer = {
+    type: "frame_description";
+    frame_id: string;
+    stream_id: string;
+    description: string;
+} | {
+    type: "frame_embedding";
+    frame_id: string;
+    stream_id: string;
+    embedding: number[];
+}
+
 export type WorkerToEngine = {
     type: "i_am_worker";
     secret: string;
