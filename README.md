@@ -18,6 +18,7 @@ This engine is designed to be run on a separate, GPU-accelerated machine for opt
     -   Python 3.12+
     -   [uv](https://github.com/astral-sh/uv) (recommended Python package manager) or `pip`.
     -   [Bun](https://bun.sh) runtime.
+    -   [tmux](https://github.com/tmux/tmux) for managing workers with `run.sh`.
 
 ### Installation
 
@@ -49,7 +50,7 @@ This engine is designed to be run on a separate, GPU-accelerated machine for opt
 
 ### Running the Engine
 
-The easiest way to start the engine is by using the provided script. It handles launching both the Python services and the Bun WebSocket server.
+The easiest way to start the engine is by using the provided `run.sh` script. It handles launching both the Python services and the Bun WebSocket server.
 
 ```bash
 sh run.sh
