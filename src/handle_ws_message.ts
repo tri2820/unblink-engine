@@ -185,6 +185,9 @@ export function createWsMessageHandler(clients$: () => Map<ServerWebSocket<unkno
                             job_id: (object_detection_job as any).id
                         }, "Sending object detection result:");
                         client.ws.send(encoded);
+
+                        // TODO: Implement proper cleanup flow
+                        fs.unlinkSync(file_path);
                     }
                 });
             }
