@@ -29,6 +29,12 @@ def parse_env():
             env_config["max_latency_ms"] = int(max_latency_ms_str)
         except (ValueError, TypeError):
             print(f"Warning: Could not parse MAX_LATENCY_MS from environment variable. Value: '{max_latency_ms_str}'")
+
+    if "MAX_BATCH_SIZE" in os.environ:
+        try:
+            env_config["max_batch_size"] = int(os.environ["MAX_BATCH_SIZE"])
+        except (ValueError, TypeError):
+            print(f"Warning: Could not parse MAX_BATCH_SIZE from environment variable. Value: '{os.environ['MAX_BATCH_SIZE']}'")
     
     return env_config
 

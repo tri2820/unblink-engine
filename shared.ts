@@ -1,24 +1,4 @@
-export type ServerToEngine = {
-    type: "frame_binary";
-    frame_id: string;
-    stream_id: string;
-    frame: Uint8Array;
-} | {
-    type: "i_am_server";
-    token?: string;
-}
-
-export type EngineToServer = {
-    type: "frame_description";
-    frame_id: string;
-    stream_id: string;
-    description: string;
-} | {
-    type: "frame_embedding";
-    frame_id: string;
-    stream_id: string;
-    embedding: number[];
-}
+import type { ServerToEngine } from "./engine";
 
 export type WorkerToEngine = {
     type: "i_am_worker";

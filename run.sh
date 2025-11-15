@@ -2,7 +2,7 @@
 
 # --- Configuration ---
 # Set the session name
-SESSION="unblink_engine"
+SESSION="engine"
 
 # Define the full path to your project's root directory
 # This makes the script runnable from anywhere
@@ -38,6 +38,11 @@ tmux send-keys -t "$SESSION:worker_vlm" "cd \"$PROJECT_DIR/py\" && $VLM_CMD" C-m
 tmux new-window -t "$SESSION" -n worker_fast_embedding 
 FAST_EMBEDDING_CMD="WORKER_TYPE=\"fast_embedding\" MAX_LATENCY_MS=\"200\" uv run python -m worker_embedding"
 tmux send-keys -t "$SESSION:worker_fast_embedding" "cd \"$PROJECT_DIR/py\" && $FAST_EMBEDDING_CMD" C-m
+
+# Create and run the object detection worker
+tmux new-window -t "$SESSION" -n worker_object_detection 
+OBJECT_DETECTION_CMD="WORKER_TYPE=\"object_detection\" MAX_LATENCY_MS=\"300\" MAX_BATCH_SIZE=\"64\" uv run python -m worker_object_detection"
+tmux send-keys -t "$SESSION:worker_object_detection" "cd \"$PROJECT_DIR/py\" && $OBJECT_DETECTION_CMD" C-m
 
 # --- Finalization ---
 # Select the 'distributor' window by default
