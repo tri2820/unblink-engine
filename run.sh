@@ -45,10 +45,15 @@ OBJECT_DETECTION_CMD="WORKER_TYPE=\"object_detection\" MAX_LATENCY_MS=\"300\" MA
 tmux send-keys -t "$SESSION:worker_object_detection" "cd \"$PROJECT_DIR/py\" && $OBJECT_DETECTION_CMD" C-m
 
 
-# Create and run the llm worker
+# Create and run the llm fast worker
 tmux new-window -t "$SESSION" -n worker_llm_fast
-LLM_FAST_CMD="WORKER_TYPE=\"llm\" MAX_LATENCY_MS=\"200\" uv run python -m worker_llm"
+LLM_FAST_CMD="WORKER_TYPE=\"llm_fast\" MAX_LATENCY_MS=\"200\" uv run python -m worker_llm"
 tmux send-keys -t "$SESSION:worker_llm_fast" "cd \"$PROJECT_DIR/py\" && $LLM_FAST_CMD" C-m
+
+# Create and run the llm worker
+tmux new-window -t "$SESSION" -n worker_llm
+LLM_CMD="WORKER_TYPE=\"llm\" MAX_LATENCY_MS=\"5000\" MAX_BATCH_SIZE=\"4\" MODEL_ID=\"microsoft/Phi-4-mini-instruct\" uv run python -m worker_llm"
+tmux send-keys -t "$SESSION:worker_llm" "cd \"$PROJECT_DIR/py\" && $LLM_CMD" C-m
 
 # --- Finalization ---
 # Select the 'distributor' window by default

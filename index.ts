@@ -5,11 +5,23 @@ import { logger } from './logger';
 import { createWsMessageHandler } from './src/handle_ws_message';
 import { parseJsonFromString } from './src/utils';
 
+export type SummaryBuilder = {
+    media_units: {
+        id: string;
+        description: string,
+        at_time: number,
+    }[],
+}
 export type Client = {
     id: string;
     ws: ServerWebSocket<unknown>;
     server_config?: {
         tenant_id: string;
+        state: {
+            [media_id: string]: {
+                summary_builder: SummaryBuilder
+            }
+        }
     }
     worker_config?: {
         worker_type: string;
@@ -71,6 +83,7 @@ export function workerFlush(c: Client) {
     logger.info({
         event: 'worker_flush',
         c_id: c.id,
+        worker_type: c.worker_config.worker_type,
         length: inputs.length,
     }, "Sending job batch to worker");
     c.ws.send(msg);
@@ -137,7 +150,7 @@ Bun.serve({
                     const output = await new Promise<Record<string, any>>((resolve) => {
                         sendJob({
                             messages,
-                        }, 'llm', {
+                        }, 'llm_fast', {
                             cont(output) {
                                 logger.info({ event: 'autocomplete', text }, 'Processed autocomplete request');
                                 resolve(output);
@@ -146,8 +159,9 @@ Bun.serve({
                     })
 
                     console.log('autocomplete output', output);
-                    const array_of_strings = parseJsonFromString(output.response);
-                    if (!Array.isArray(array_of_strings) || array_of_strings.length === 0 || !array_of_strings.every((item) => typeof item === 'string')) {
+                    const parsed = parseJsonFromString(output.response);
+                    const array_of_strings = parsed.data;
+                    if (!array_of_strings || !Array.isArray(array_of_strings) || array_of_strings.length === 0 || !array_of_strings.every((item) => typeof item === 'string')) {
                         throw new Error("Failed to parse autocomplete response as array of strings");
                     }
 

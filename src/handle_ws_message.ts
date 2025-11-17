@@ -2,21 +2,24 @@ import type { ServerWebSocket } from "bun";
 import { decode, encode } from "cbor-x";
 import fs from 'fs';
 import path from 'path';
-import { sendJob, type Client } from "..";
+import { sendJob, type Client, type SummaryBuilder } from "..";
 import { ensureDirExists, FRAMES_DIR } from "../appdir";
-import type { EngineReceivedMessage, EngineToServer } from "../engine";
+import type { EngineReceivedMessage, EngineToServer, ServerToEngine } from "../engine";
 import { logger } from "../logger";
+import type { WorkerToEngine } from "../shared";
+import { NoSuchKey } from "@aws-sdk/client-s3";
+import { summarize } from "./summary";
 
 const FRAME_SIZE_LIMIT = 2 * 1024 * 1024; // 2 MB
 
-type HandlerProps = {
+
+
+async function handle_register(props: {
     decoded: EngineReceivedMessage,
     job_map: Map<string, { cont: (result: Record<string, any>) => void }>,
     client: Client,
     ws: ServerWebSocket<unknown>,
-}
-
-async function handle_register(props: HandlerProps) {
+}) {
     const { decoded, client, ws, job_map } = props;
     if (decoded.type === "i_am_worker") {
         if (!decoded.worker_config || !decoded.worker_config.worker_type) {
@@ -54,6 +57,7 @@ async function handle_register(props: HandlerProps) {
         }, 'Registered server client', client.id);
         client.server_config = {
             tenant_id: client.id, // For now, use client ID as tenant ID
+            state: {},
         };
 
         // TODO: validate token if provided
@@ -62,7 +66,12 @@ async function handle_register(props: HandlerProps) {
     }
 }
 
-async function handle__workerMessage(props: HandlerProps) {
+async function handle__workerMessage(props: {
+    decoded: WorkerToEngine,
+    job_map: Map<string, { cont: (result: Record<string, any>) => void }>,
+    client: Client,
+    ws: ServerWebSocket<unknown>,
+}) {
     const { decoded, client, ws, job_map } = props;
 
     if (decoded.type === "worker_output") {
@@ -87,19 +96,35 @@ async function handle__workerMessage(props: HandlerProps) {
         return;
     }
 }
-
-async function handle__serverMessage(props: HandlerProps) {
+async function handle__serverMessage(props: {
+    decoded: ServerToEngine,
+    job_map: Map<string, { cont: (result: Record<string, any>) => void }>,
+    client: Client,
+    ws: ServerWebSocket<unknown>,
+}) {
     const { decoded, client, ws } = props;
 
+    if (!client.server_config) {
+        console.error("Received server message from non-server client.", decoded);
+        ws.close(1008, "Not a server");
+        return;
+    }
 
-    // === Server requests worker processing on frames ===
+    const tenant_id = client.server_config.tenant_id;
+
+    if (!tenant_id) {
+        console.error("Received frame_binary from unauthenticated client.", decoded);
+        ws.close(1008, "Unauthenticated");
+        return;
+    }
+
     if (decoded.type === "frame_binary") {
-        const tenant_id = client.server_config?.tenant_id;
-
-        if (!tenant_id) {
-            console.error("Received frame_binary from unauthenticated client.", decoded);
-            ws.close(1008, "Unauthenticated");
-            return;
+        if (client.server_config.state[decoded.stream_id] === undefined) {
+            client.server_config.state[decoded.stream_id] = {
+                summary_builder: {
+                    media_units: [],
+                }
+            }
         }
 
         if (decoded.frame.byteLength > FRAME_SIZE_LIMIT) {
@@ -122,7 +147,19 @@ async function handle__serverMessage(props: HandlerProps) {
         // });
         fs.writeFileSync(file_path, decoded.frame);
 
-        let cleanupCountdown = decoded.workers.length;
+        let __cleanupCountdown = Object.entries(decoded.workers).filter(x => x[1]).length;
+
+        // Cleanup frame file after all workers have responded
+        const countdown = () => {
+            __cleanupCountdown--;
+            if (__cleanupCountdown <= 0) {
+                fs.unlink(file_path, (err) => {
+                    if (err) {
+                        console.error("Failed to delete frame file:", file_path, err);
+                    }
+                });
+            }
+        };
 
         // Requested VLM worker
         if (decoded.workers.vlm) {
@@ -158,7 +195,21 @@ async function handle__serverMessage(props: HandlerProps) {
                     });
                     const encoded = encode(msg);
                     client.ws.send(encoded);
-                    cleanupCountdown--;
+                    countdown();
+
+                    // Add to summary builder
+                    const sb = client.server_config!.state[decoded.stream_id]!.summary_builder;
+                    sb.media_units.push({
+                        id: decoded.frame_id,
+                        description: output.response,
+                        at_time: decoded.at_time,
+                    });
+
+                    const summary_msg = await summarize(decoded.stream_id, sb);
+                    if (summary_msg) {
+                        const encoded = encode(summary_msg);
+                        client.ws.send(encoded);
+                    }
                 }
             });
         }
@@ -184,7 +235,7 @@ async function handle__serverMessage(props: HandlerProps) {
                     });
                     const encoded = encode(msg);
                     client.ws.send(encoded);
-                    cleanupCountdown--;
+                    countdown();
                 }
             });
         }
@@ -218,36 +269,10 @@ async function handle__serverMessage(props: HandlerProps) {
                     // }, "Sending object detection result:");
                     client.ws.send(encoded);
 
-                    cleanupCountdown--;
+                    countdown();
                 }
             });
         }
-
-        // Cleanup frame file after all workers have responded
-        const checkCleanup = () => {
-            if (cleanupCountdown <= 0) {
-                fs.unlink(file_path, (err) => {
-                    if (err) {
-                        console.error("Failed to delete frame file:", file_path, err);
-                    } else {
-                        logger.info({
-                            event: 'frame_file_deleted',
-                            c_id: client.id,
-                            file_path
-                        }, "Deleted frame file:", file_path);
-                    }
-                });
-            }
-        };
-
-        // Polling cleanup check
-        const cleanupInterval = setInterval(() => {
-            checkCleanup();
-            if (cleanupCountdown <= 0) {
-                clearInterval(cleanupInterval);
-            }
-        }, 3000);
-
         return;
     }
 }

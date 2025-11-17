@@ -104,6 +104,7 @@ def load_ai_model():
             "temperature": 0.7,
             "top_k": 50,
             "top_p": 0.95,
+            "max_new_tokens": 20000000000000000,
         }
 
         print(f"Processing a batch of {len(batch_for_processor)} message sequences...")
