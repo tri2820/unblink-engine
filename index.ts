@@ -3,6 +3,7 @@ import type { ServerWebSocket } from 'bun';
 import { encode } from 'cbor-x';
 import { logger } from './logger';
 import { createWsMessageHandler } from './src/handle_ws_message';
+import { parseJsonFromString } from './src/utils';
 
 export type Client = {
     id: string;
@@ -100,14 +101,59 @@ Bun.serve({
             async POST(req) {
                 try {
                     const { text } = await req.json() as { text: string };
-                    // Perform autocomplete logic here
-                    return new Response(JSON.stringify({
-                        items: [
-                            { text: text + ' completion1' },
-                            { text: text + ' completion2' },
-                            { text: text + ' completion3' },
 
-                        ]
+                    const messages = [
+                        {
+                            "role": "system",
+                            "content":
+                                `You are an expert security and threat assessment assistant. Your task is to refine a user's keyword into 5 specific, actionable search queries with an investigative mindset. Respond ONLY with a single, valid JSON array of 5 strings. Do not include explanations or markdown.`
+
+                        },
+
+                        {
+                            "role": "user",
+                            "content": "Refine the following keyword: \"person\""
+                        },
+                        {
+                            "role": "assistant",
+                            "content": `["person carrying suspicious package", "person loitering in restricted area", "person acting erratically", "person looking into vehicles", "person wearing a disguise"]`
+                        },
+
+                        {
+                            "role": "user",
+                            "content": "Refine the following keyword: \"car\""
+                        },
+                        {
+                            "role": "assistant",
+                            "content": `["car parked in no-parking zone", "car circling the block", "car with obscured license plate", "unattended vehicle near entrance", "driver slumped over steering wheel"]`
+                        },
+
+                        {
+                            "role": "user",
+                            "content": `Refine the following keyword: "${text}"`
+                        }
+                    ]
+
+                    const output = await new Promise<Record<string, any>>((resolve) => {
+                        sendJob({
+                            messages,
+                        }, 'llm', {
+                            cont(output) {
+                                logger.info({ event: 'autocomplete', text }, 'Processed autocomplete request');
+                                resolve(output);
+                            }
+                        });
+                    })
+
+                    console.log('autocomplete output', output);
+                    const array_of_strings = parseJsonFromString(output.response);
+                    if (!Array.isArray(array_of_strings) || array_of_strings.length === 0 || !array_of_strings.every((item) => typeof item === 'string')) {
+                        throw new Error("Failed to parse autocomplete response as array of strings");
+                    }
+
+                    // Return the array of strings as autocomplete items
+                    return new Response(JSON.stringify({
+                        items: array_of_strings.map(str => ({ text: str }))
                     }), {
                         status: 200,
                         headers: {
@@ -116,7 +162,11 @@ Bun.serve({
                     });
                 } catch (error) {
                     logger.error({ event: 'autocomplete_error', error }, 'Error processing autocomplete request');
-                    return new Response(JSON.stringify({ error: 'Invalid request' }), {
+                    return new Response(JSON.stringify({
+                        // Empty items on error
+                        items: [],
+                        error: 'Failed to process autocomplete request'
+                    }), {
                         status: 400,
                         headers: {
                             "Content-Type": "application/json",

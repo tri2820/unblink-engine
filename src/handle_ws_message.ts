@@ -114,12 +114,12 @@ async function handle__serverMessage(props: HandlerProps) {
         // This ensures unique filenames even if frames arrive quickly, for proper cleanup
         const nonce = crypto.randomUUID();
         const file_path = path.join(FRAMES_DIR_TENANT, `${decoded.frame_id}-${nonce}.jpg`);
-        logger.info({
-            event: 'frame_received',
-            c_id: client.id,
-            size: decoded.frame.byteLength,
-            file_path
-        });
+        // logger.info({
+        //     event: 'frame_received',
+        //     c_id: client.id,
+        //     size: decoded.frame.byteLength,
+        //     file_path
+        // });
         fs.writeFileSync(file_path, decoded.frame);
 
         let cleanupCountdown = decoded.workers.length;
@@ -149,7 +149,7 @@ async function handle__serverMessage(props: HandlerProps) {
                         type: "frame_description",
                         frame_id: decoded.frame_id,
                         stream_id: decoded.stream_id,
-                        description: output.description,
+                        description: output.response,
                     }
                     logger.info({
                         event: 'frame_description',
@@ -202,20 +202,20 @@ async function handle__serverMessage(props: HandlerProps) {
                         stream_id: decoded.stream_id,
                         objects: output.detections,
                     }
-                    logger.info({
-                        event: 'frame_object_detection',
-                        c_id: client.id,
-                        msg: {
-                            ...msg,
-                            objects: `[${output.detections.length} objects]`
-                        }
-                    });
+                    // logger.info({
+                    //     event: 'frame_object_detection',
+                    //     c_id: client.id,
+                    //     msg: {
+                    //         ...msg,
+                    //         objects: `[${output.detections.length} objects]`
+                    //     }
+                    // });
                     const encoded = encode(msg);
-                    logger.info({
-                        frame_id: decoded.frame_id,
-                        detections_length: output.detections.length,
-                        job_id: (object_detection_job as any).id
-                    }, "Sending object detection result:");
+                    // logger.info({
+                    //     frame_id: decoded.frame_id,
+                    //     detections_length: output.detections.length,
+                    //     job_id: (object_detection_job as any).id
+                    // }, "Sending object detection result:");
                     client.ws.send(encoded);
 
                     cleanupCountdown--;

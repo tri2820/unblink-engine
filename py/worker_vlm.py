@@ -39,16 +39,16 @@ BATCH INPUT FORMAT (Accepts a standard 'messages' array per input ID):
   ]
 }
 
-BATCH OUTPUT FORMAT (A single description is generated in response to the messages for an ID):
+BATCH OUTPUT FORMAT (A single response is generated in response to the messages for an ID):
 {
   "output": [
     {
       "id": "req_001",
-      "description": "The model's answer based on the provided system prompt, images, and questions."
+      "response": "The model's answer based on the provided system prompt, images, and questions."
     },
     {
       "id": "req_002",
-      "description": "The model's answer based on the car/entrance images and the two questions."
+      "response": "The model's answer based on the car/entrance images and the two questions."
     }
   ]
 }
@@ -128,11 +128,11 @@ def load_ai_model():
             tok_ids = raw_output.cpu().tolist()
             raw_text = processor.decode(tok_ids, skip_special_tokens=True)
             # Keep previous logic for extracting assistant reply
-            description = raw_text.split("Assistant: ")[-1].strip()
+            response = raw_text.split("Assistant: ")[-1].strip()
             # Include image name in output
             outputs.append({
                 "id": message_inputs[i]['id'],
-                "description": description
+                "response": response
             })
             i += 1
 
