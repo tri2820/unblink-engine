@@ -52,6 +52,8 @@ async def client_handler(heavy_ai_workload):
     initial_delay = 1.0
     max_delay = 60.0
     reconnect_delay = initial_delay
+
+    worker_secret = os.getenv("WORKER_SECRET")
     
     with concurrent.futures.ThreadPoolExecutor() as pool:
         while True:
@@ -64,7 +66,7 @@ async def client_handler(heavy_ai_workload):
                     
                     # 2. Parse environment variables to get any overrides.
                     worker_config = parse_env()
-                    msg = {"type": "i_am_worker", "worker_config": worker_config }
+                    msg = {"type": "i_am_worker", "worker_config": worker_config, "worker_secret": worker_secret}
                     encoded = dumps(msg)
                     await websocket.send(encoded)
 

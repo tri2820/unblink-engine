@@ -4,13 +4,17 @@ import { encode } from 'cbor-x';
 import { logger } from './logger';
 import { createWsMessageHandler } from './src/handle_ws_message';
 import { parseJsonFromString } from './src/utils';
+import type { Moment, Summary } from './engine';
+
+export type MediaUnit = {
+    id: string;
+    description: string,
+    at_time: number,
+}
 
 export type SummaryBuilder = {
-    media_units: {
-        id: string;
-        description: string,
-        at_time: number,
-    }[],
+    rolling_summary?: Summary,
+    media_units: MediaUnit[],
 }
 export type Client = {
     id: string;
@@ -19,6 +23,7 @@ export type Client = {
         tenant_id: string;
         state: {
             [media_id: string]: {
+                last_media_unit?: MediaUnit;
                 summary_builder: SummaryBuilder
             }
         }
@@ -80,12 +85,12 @@ export function workerFlush(c: Client) {
     const msg = encode({
         inputs
     })
-    logger.info({
-        event: 'worker_flush',
-        c_id: c.id,
-        worker_type: c.worker_config.worker_type,
-        length: inputs.length,
-    }, "Sending job batch to worker");
+    // logger.info({
+    //     event: 'worker_flush',
+    //     c_id: c.id,
+    //     worker_type: c.worker_config.worker_type,
+    //     length: inputs.length,
+    // }, "Sending job batch to worker");
     c.ws.send(msg);
 }
 

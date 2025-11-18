@@ -2,20 +2,17 @@ import type { ServerWebSocket } from "bun";
 import { decode, encode } from "cbor-x";
 import fs from 'fs';
 import path from 'path';
-import { sendJob, type Client, type SummaryBuilder } from "..";
+import { sendJob, type Client } from "..";
 import { ensureDirExists, FRAMES_DIR } from "../appdir";
-import type { EngineReceivedMessage, EngineToServer, ServerToEngine } from "../engine";
+import type { EngineToServer, ServerToEngine } from "../engine";
 import { logger } from "../logger";
-import type { WorkerToEngine } from "../shared";
-import { NoSuchKey } from "@aws-sdk/client-s3";
+import type { EngineReceivedMessage, RegistrationMessage, WorkerToEngine } from "../shared";
 import { summarize } from "./summary";
 
 const FRAME_SIZE_LIMIT = 2 * 1024 * 1024; // 2 MB
 
-
-
 async function handle_register(props: {
-    decoded: EngineReceivedMessage,
+    decoded: RegistrationMessage,
     job_map: Map<string, { cont: (result: Record<string, any>) => void }>,
     client: Client,
     ws: ServerWebSocket<unknown>,
@@ -27,7 +24,7 @@ async function handle_register(props: {
             return;
         }
 
-        if (decoded.secret !== process.env.WORKER_SECRET) {
+        if (decoded.worker_secret !== process.env.WORKER_SECRET) {
             console.error("Invalid WORKER_SECRET from worker.");
             ws.close(1008, "Invalid WORKER_SECRET");
             return;
@@ -163,30 +160,83 @@ async function handle__serverMessage(props: {
 
         // Requested VLM worker
         if (decoded.workers.vlm) {
-            const image_description_job = {
-                messages: [
-                    {
-                        role: 'system',
-                        content: [
-                            { type: 'text', text: `Describe this image in detailed. Do NOT say anything about the image being blurry. Try to describe what looks like inside.` },
-                        ]
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            { "type": "image", "image": file_path },
-                        ]
-                    }
-                ]
-            };
 
-            sendJob(image_description_job, 'vlm', {
+            // const example = [
+            //     {
+            //         role: 'user', content: [
+            //             { type: 'text', text: 'Describe in detailed. Do NOT say anything about being blurry. Try to describe what looks like inside. Previous description: A garage with a red car. The car seems to be broken. The door is openning' }
+            //         ]
+            //     },
+            //     {
+            //         role: 'assistant', content: [
+            //             { type: 'text', text: 'A person walked in with a wrench in his hand.' }
+            //         ]
+            //     },
+            // ]
+
+            // const last_media_unit = client.server_config.state[decoded.stream_id]?.last_media_unit;
+            // const image_description_job = {
+            //     messages: [
+            //         {
+            //             role: 'system',
+            //             content: [
+            //                 { type: 'text', text: `Describe what you see in detailed. Do NOT say anything about being blurry.` },
+            //             ]
+            //         },
+            //         // ...example,
+            //         {
+            //             "role": "user",
+            //             "content": [
+            //                 ...(last_media_unit ? [
+            //                     {
+            //                         type: "text", text: `Previous description so we can skip describing these again: ${JSON.stringify(last_media_unit.description, null, 4)}. Do not be repetitive. Do not output noise or background again. \n\nFocusing on changes or new elements.`
+            //                     }
+            //                 ] : []),
+            //                 { type: "text", text: "Describe what you see in detailed:" },
+            //                 { "type": "image", "image": file_path },
+            //             ]
+            //         }
+            //     ]
+            // };
+
+            const image_caption_job = {
+                "image_path": file_path
+            }
+
+            const at_time = new Date().getTime();
+            sendJob(image_caption_job, 'caption', {
                 async cont(output) {
+                    let description = output.response;
+                    // Try to remove common prefixes
+                    // E.g., "This image depicts ...", "This image captures ...", "In this image, ", "The image shows ...", "The image captures ..."
+                    const prefixes = [
+                        "This is an image of a ",
+                        "The image is ",
+                        "This image depicts ",
+                        "This image captures ",
+                        "In this image, ",
+                        "The image shows ",
+                        "The image captures ",
+                        "This photo depicts ",
+                        "This photo captures ",
+                        "In this photo, ",
+                        "The photo shows ",
+                        "The photo captures ",
+                    ];
+                    for (const prefix of prefixes) {
+                        if (description.startsWith(prefix)) {
+                            description = description.slice(prefix.length);
+                            // Properly capitalize first letter
+                            description = description.charAt(0).toUpperCase() + description.slice(1);
+                            break;
+                        }
+                    }
+
                     const msg: EngineToServer = {
                         type: "frame_description",
                         frame_id: decoded.frame_id,
                         stream_id: decoded.stream_id,
-                        description: output.response,
+                        description,
                     }
                     logger.info({
                         event: 'frame_description',
@@ -197,12 +247,22 @@ async function handle__serverMessage(props: {
                     client.ws.send(encoded);
                     countdown();
 
+                    // Update last media unit if it's older than the current one
+                    const last_media_unit_at_time = client.server_config!.state[decoded.stream_id]!.last_media_unit?.at_time || 0;
+                    if (at_time >= last_media_unit_at_time) {
+                        client.server_config!.state[decoded.stream_id]!.last_media_unit = {
+                            id: decoded.frame_id,
+                            description,
+                            at_time,
+                        };
+                    }
+
                     // Add to summary builder
                     const sb = client.server_config!.state[decoded.stream_id]!.summary_builder;
                     sb.media_units.push({
                         id: decoded.frame_id,
-                        description: output.response,
-                        at_time: decoded.at_time,
+                        description,
+                        at_time,
                     });
 
                     const summary_msg = await summarize(decoded.stream_id, sb);
@@ -228,11 +288,11 @@ async function handle__serverMessage(props: {
                         stream_id: decoded.stream_id,
                         embedding: output.embedding,
                     }
-                    logger.info({
-                        event: 'frame_embedding',
-                        c_id: client.id,
-                        msg: '[embedding data]',
-                    });
+                    // logger.info({
+                    //     event: 'frame_embedding',
+                    //     c_id: client.id,
+                    //     msg: '[embedding data]',
+                    // });
                     const encoded = encode(msg);
                     client.ws.send(encoded);
                     countdown();
@@ -299,12 +359,12 @@ export function createWsMessageHandler(clients$: () => Map<ServerWebSocket<unkno
         }
 
         if (client.worker_config) {
-            await handle__workerMessage({ decoded, job_map, client, ws });
+            await handle__workerMessage({ decoded: decoded as any, job_map, client, ws });
             return;
         }
 
         if (client.server_config) {
-            await handle__serverMessage({ decoded, job_map, client, ws });
+            await handle__serverMessage({ decoded: decoded as any, job_map, client, ws });
             return;
         }
         // === Worker outputs ===

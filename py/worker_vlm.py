@@ -120,7 +120,7 @@ def load_ai_model():
 
         inputs = inputs.to('cuda')
 
-        raw_outputs = model.generate(**inputs, max_new_tokens=256)
+        raw_outputs = model.generate(**inputs, max_new_tokens=20000000)
 
         outputs = []
         i = 0

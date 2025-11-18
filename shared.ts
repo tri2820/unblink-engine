@@ -1,14 +1,14 @@
-import type { ServerToEngine } from "./engine";
-
-export type WorkerToEngine = {
+import type { ServerRegistrationMessage, ServerToEngine } from "./engine";
+export type WorkerRegistrationMessage = {
     type: "i_am_worker";
-    secret: string;
+    worker_secret: string;
     worker_config: {
         worker_type: string;
         max_batch_size?: number;
         max_latency_ms?: number;
     };
-} | {
+}
+export type WorkerToEngine = | {
     type: 'worker_output';
     output: {
         id: string;
@@ -17,4 +17,5 @@ export type WorkerToEngine = {
 
 }
 
-export type EngineReceivedMessage = ServerToEngine | WorkerToEngine;
+export type RegistrationMessage = ServerRegistrationMessage | WorkerRegistrationMessage;
+export type EngineReceivedMessage = ServerToEngine | WorkerToEngine | RegistrationMessage;
