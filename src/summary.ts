@@ -71,14 +71,16 @@ export async function summarize(media_id: string, sb: SummaryBuilder): Promise<E
                 {
                     "from_time": "2024-03-18T18:03:45.000Z",
                     "to_time": "2024-03-18T18:03:45.000Z",
-                    "what_changed": "A person leaves a pan unattended on an active stove, creating a potential fire risk.",
+                    what_old: "A kitchen, with a person cooking at the stove.",
+                    "what_new": "A person leaves a pan unattended on an active stove, creating a potential fire risk.",
                     "importance_score": 0.5,
                     "labels": ["Unattended Cooking", "Potential Hazard"]
                 },
                 {
                     "from_time": "2024-03-18T18:05:20.000Z",
                     "to_time": "2024-03-18T18:06:10.000Z",
-                    "what_changed": "The unattended pan begins to smoke, ignites into a small fire triggering an alarm, and is then extinguished by the person.",
+                    what_old: "The person leaves the kitchen, leaving a pan on the active stove.",
+                    "what_new": "The unattended pan begins to smoke, ignites into a small fire triggering an alarm, and is then extinguished by the person.",
                     "importance_score": 1.0,
                     "labels": ["Smoke Detected", "Fire", "Alarm Triggered", "Intervention", "Emergency"]
                 }
@@ -113,7 +115,8 @@ export async function summarize(media_id: string, sb: SummaryBuilder): Promise<E
             {
               "from_time": "YYYY-MM-DDTHH:mm:ss.sssZ",
               "to_time": "YYYY-MM-DDTHH:mm:ss.sssZ",
-              "what_changed": "A concise string describing a key event or a sequence of related events.",
+              "what_old": "A concise string describing OLD key events",
+              "what_new": "A concise string describing NEW key events or just \"nothing new\"",
               "importance_score": 0.0,
               "labels": ["A list of strings that categorize this specific moment."]
             }
@@ -182,7 +185,8 @@ export async function summarize(media_id: string, sb: SummaryBuilder): Promise<E
             !summary_data.moments.every((moment: any) =>
                 typeof moment.from_time === 'string' &&
                 typeof moment.to_time === 'string' &&
-                typeof moment.what_changed === 'string' &&
+                typeof moment.what_new === 'string' &&
+                typeof moment.what_old === 'string' &&
                 typeof moment.importance_score === 'number' &&
                 Array.isArray(moment.labels) &&
                 moment.labels.every((label: any) => typeof label === 'string')

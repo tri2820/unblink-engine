@@ -212,6 +212,8 @@ async function handle__serverMessage(props: {
                     const prefixes = [
                         "This is an image of a ",
                         "The image is ",
+                        "The image depicts ",
+                        "The image captures ",
                         "This image depicts ",
                         "This image captures ",
                         "In this image, ",
