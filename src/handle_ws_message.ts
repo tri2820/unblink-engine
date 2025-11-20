@@ -7,7 +7,6 @@ import { ensureDirExists, FRAMES_DIR } from "../appdir";
 import type { EngineToServer, ServerToEngine } from "../engine";
 import { logger } from "../logger";
 import type { EngineReceivedMessage, RegistrationMessage, WorkerToEngine } from "../shared";
-import { summarize } from "./summary";
 
 const FRAME_SIZE_LIMIT = 2 * 1024 * 1024; // 2 MB
 
@@ -116,12 +115,11 @@ async function handle__serverMessage(props: {
     }
 
     if (decoded.type === "frame_binary") {
+        // Use server-side timestamp for consistency
+        const at_time = new Date().getTime();
+
         if (client.server_config.state[decoded.stream_id] === undefined) {
-            client.server_config.state[decoded.stream_id] = {
-                summary_builder: {
-                    media_units: [],
-                }
-            }
+            client.server_config.state[decoded.stream_id] = {}
         }
 
         if (decoded.frame.byteLength > FRAME_SIZE_LIMIT) {
@@ -144,7 +142,7 @@ async function handle__serverMessage(props: {
         // });
         fs.writeFileSync(file_path, decoded.frame);
 
-        let __cleanupCountdown = Object.entries(decoded.workers).filter(x => x[1]).length;
+        let __cleanupCountdown = Object.entries(decoded.workers).filter(x => x[1]).length + 1; // +1 for default motion energy worker
 
         // Cleanup frame file after all workers have responded
         const countdown = () => {
@@ -203,7 +201,7 @@ async function handle__serverMessage(props: {
                 "image_path": file_path
             }
 
-            const at_time = new Date().getTime();
+
             sendJob(image_caption_job, 'caption', {
                 async cont(output) {
                     let description = output.response;
@@ -249,29 +247,7 @@ async function handle__serverMessage(props: {
                     client.ws.send(encoded);
                     countdown();
 
-                    // Update last media unit if it's older than the current one
-                    const last_media_unit_at_time = client.server_config!.state[decoded.stream_id]!.last_media_unit?.at_time || 0;
-                    if (at_time >= last_media_unit_at_time) {
-                        client.server_config!.state[decoded.stream_id]!.last_media_unit = {
-                            id: decoded.frame_id,
-                            description,
-                            at_time,
-                        };
-                    }
 
-                    // Add to summary builder
-                    const sb = client.server_config!.state[decoded.stream_id]!.summary_builder;
-                    sb.media_units.push({
-                        id: decoded.frame_id,
-                        description,
-                        at_time,
-                    });
-
-                    const summary_msg = await summarize(decoded.stream_id, sb);
-                    if (summary_msg) {
-                        const encoded = encode(summary_msg);
-                        client.ws.send(encoded);
-                    }
                 }
             });
         }
@@ -335,6 +311,49 @@ async function handle__serverMessage(props: {
                 }
             });
         }
+
+        // Default: measure motion energy
+        // Previous frame file is probably deleted at this point
+        // But we hope that it's still in the worker LRU cache
+        const previous_frame = client.server_config!.state[decoded.stream_id]!.last_media_unit?.path;
+        if (previous_frame) {
+            sendJob({ previous_frame, current_frame: file_path }, 'motion_energy', {
+                async cont(output) {
+                    logger.info({
+                        event: 'frame_motion_energy',
+                        c_id: client.id,
+                        stream_id: decoded.stream_id,
+                        frame_id: decoded.frame_id,
+                        motion_energy: output.motion_energy,
+                    }, "Motion energy calculated.");
+                    const msg: EngineToServer = {
+                        type: "frame_motion_energy",
+                        stream_id: decoded.stream_id,
+                        frame_id: decoded.frame_id,
+                        motion_energy: output.motion_energy,
+                    }
+                    const encoded = encode(msg);
+                    client.ws.send(encoded);
+                    countdown();
+                }
+            })
+        } else {
+            // No previous frame, skip motion energy calculation
+            logger.info("No previous frame for motion energy calculation.");
+            countdown();
+        }
+
+
+        // Update last media unit if it's older than the current one
+        const last_media_unit_at_time = client.server_config!.state[decoded.stream_id]!.last_media_unit?.at_time || 0;
+        if (at_time >= last_media_unit_at_time) {
+            client.server_config!.state[decoded.stream_id]!.last_media_unit = {
+                id: decoded.frame_id,
+                path: file_path,
+                at_time,
+            };
+        }
+
         return;
     }
 }
@@ -372,6 +391,5 @@ export function createWsMessageHandler(clients$: () => Map<ServerWebSocket<unkno
         // === Worker outputs ===
         console.error("Received message from unauthenticated and non-worker client.", decoded);
         ws.close(1008, "Unauthenticated");
-
     }
 }

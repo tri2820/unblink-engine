@@ -8,7 +8,7 @@ import type { Moment, Summary } from './engine';
 
 export type MediaUnit = {
     id: string;
-    description: string,
+    path: string;
     at_time: number,
 }
 
@@ -23,8 +23,9 @@ export type Client = {
         tenant_id: string;
         state: {
             [media_id: string]: {
+
                 last_media_unit?: MediaUnit;
-                summary_builder: SummaryBuilder
+                // summary_builder: SummaryBuilder
             }
         }
     }
