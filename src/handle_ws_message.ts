@@ -1,4 +1,4 @@
-import type { ServerWebSocket } from "bun";
+import { file, type ServerWebSocket } from "bun";
 import { decode, encode } from "cbor-x";
 import fs from 'fs';
 import path from 'path';
@@ -118,8 +118,8 @@ async function handle__serverMessage(props: {
         // Use server-side timestamp for consistency
         const at_time = new Date().getTime();
 
-        if (client.server_config.state[decoded.stream_id] === undefined) {
-            client.server_config.state[decoded.stream_id] = {}
+        if (client.server_config.state[decoded.media_id] === undefined) {
+            client.server_config.state[decoded.media_id] = {}
         }
 
         if (decoded.frame.byteLength > FRAME_SIZE_LIMIT) {
@@ -142,10 +142,11 @@ async function handle__serverMessage(props: {
         // });
         fs.writeFileSync(file_path, decoded.frame);
 
-        let __cleanupCountdown = Object.entries(decoded.workers).filter(x => x[1]).length + 1; // +1 for default motion energy worker
+        let __cleanupCountdown = Object.values(decoded.workers).filter(x => x).length;
 
         // Cleanup frame file after all workers have responded
         const countdown = () => {
+            console.log('cleanup', __cleanupCountdown, file_path);
             __cleanupCountdown--;
             if (__cleanupCountdown <= 0) {
                 fs.unlink(file_path, (err) => {
@@ -158,45 +159,6 @@ async function handle__serverMessage(props: {
 
         // Requested VLM worker
         if (decoded.workers.vlm) {
-
-            // const example = [
-            //     {
-            //         role: 'user', content: [
-            //             { type: 'text', text: 'Describe in detailed. Do NOT say anything about being blurry. Try to describe what looks like inside. Previous description: A garage with a red car. The car seems to be broken. The door is openning' }
-            //         ]
-            //     },
-            //     {
-            //         role: 'assistant', content: [
-            //             { type: 'text', text: 'A person walked in with a wrench in his hand.' }
-            //         ]
-            //     },
-            // ]
-
-            // const last_media_unit = client.server_config.state[decoded.stream_id]?.last_media_unit;
-            // const image_description_job = {
-            //     messages: [
-            //         {
-            //             role: 'system',
-            //             content: [
-            //                 { type: 'text', text: `Describe what you see in detailed. Do NOT say anything about being blurry.` },
-            //             ]
-            //         },
-            //         // ...example,
-            //         {
-            //             "role": "user",
-            //             "content": [
-            //                 ...(last_media_unit ? [
-            //                     {
-            //                         type: "text", text: `Previous description so we can skip describing these again: ${JSON.stringify(last_media_unit.description, null, 4)}. Do not be repetitive. Do not output noise or background again. \n\nFocusing on changes or new elements.`
-            //                     }
-            //                 ] : []),
-            //                 { type: "text", text: "Describe what you see in detailed:" },
-            //                 { "type": "image", "image": file_path },
-            //             ]
-            //         }
-            //     ]
-            // };
-
             const image_caption_job = {
                 "image_path": file_path
             }
@@ -235,7 +197,7 @@ async function handle__serverMessage(props: {
                     const msg: EngineToServer = {
                         type: "frame_description",
                         frame_id: decoded.frame_id,
-                        stream_id: decoded.stream_id,
+                        media_id: decoded.media_id,
                         description,
                     }
                     logger.info({
@@ -263,7 +225,7 @@ async function handle__serverMessage(props: {
                     const msg: EngineToServer = {
                         type: "frame_embedding",
                         frame_id: decoded.frame_id,
-                        stream_id: decoded.stream_id,
+                        media_id: decoded.media_id,
                         embedding: output.embedding,
                     }
                     // logger.info({
@@ -288,7 +250,7 @@ async function handle__serverMessage(props: {
                     const msg: EngineToServer = {
                         type: "frame_object_detection",
                         frame_id: decoded.frame_id,
-                        stream_id: decoded.stream_id,
+                        media_id: decoded.media_id,
                         objects: output.detections,
                     }
                     // logger.info({
@@ -312,23 +274,14 @@ async function handle__serverMessage(props: {
             });
         }
 
-        // Default: measure motion energy
-        // Previous frame file is probably deleted at this point
-        // But we hope that it's still in the worker LRU cache
-        const previous_frame = client.server_config!.state[decoded.stream_id]!.last_media_unit?.path;
-        if (previous_frame) {
-            sendJob({ previous_frame, current_frame: file_path }, 'motion_energy', {
+        if (decoded.workers.motion_energy) {
+            // Default: measure motion energy
+            // We send the job for every frame so the worker can update its internal state (media_id -> last_frame)
+            sendJob({ current_frame: file_path, media_id: decoded.media_id }, 'motion_energy', {
                 async cont(output) {
-                    logger.info({
-                        event: 'frame_motion_energy',
-                        c_id: client.id,
-                        stream_id: decoded.stream_id,
-                        frame_id: decoded.frame_id,
-                        motion_energy: output.motion_energy,
-                    }, "Motion energy calculated.");
                     const msg: EngineToServer = {
                         type: "frame_motion_energy",
-                        stream_id: decoded.stream_id,
+                        media_id: decoded.media_id,
                         frame_id: decoded.frame_id,
                         motion_energy: output.motion_energy,
                     }
@@ -337,22 +290,9 @@ async function handle__serverMessage(props: {
                     countdown();
                 }
             })
-        } else {
-            // No previous frame, skip motion energy calculation
-            logger.info("No previous frame for motion energy calculation.");
-            countdown();
         }
 
 
-        // Update last media unit if it's older than the current one
-        const last_media_unit_at_time = client.server_config!.state[decoded.stream_id]!.last_media_unit?.at_time || 0;
-        if (at_time >= last_media_unit_at_time) {
-            client.server_config!.state[decoded.stream_id]!.last_media_unit = {
-                id: decoded.frame_id,
-                path: file_path,
-                at_time,
-            };
-        }
 
         return;
     }

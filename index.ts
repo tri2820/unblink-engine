@@ -23,8 +23,6 @@ export type Client = {
         tenant_id: string;
         state: {
             [media_id: string]: {
-
-                last_media_unit?: MediaUnit;
                 // summary_builder: SummaryBuilder
             }
         }

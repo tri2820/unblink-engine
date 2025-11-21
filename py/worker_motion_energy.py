@@ -12,38 +12,10 @@ from collections import OrderedDict
 
 
 # -----------------------------------------------------------
-# GLOBAL GRAYSCALE CACHE (LRU)
+# GLOBAL STATE
 # -----------------------------------------------------------
-MAX_CACHE_SIZE = 1000  # tune based on your RAM
-gray_cache = OrderedDict()  # path → np.ndarray (grayscale)
+MAX_MEDIA_BUFFERS = 100  # Max number of active streams to track
 
-
-def load_gray(path: str):
-    """
-    Load grayscale frame with caching + LRU trim.
-    Returns a CV2 grayscale numpy array.
-    """
-    # Cache HIT
-    if path in gray_cache:
-        gray_cache.move_to_end(path)
-        return gray_cache[path]
-
-    # Cache MISS → load from disk
-    img = cv2.imread(path)
-    if img is None:
-        raise ValueError(f"Failed to read: {path}")
-
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    # Store in cache
-    gray_cache[path] = gray
-    gray_cache.move_to_end(path)
-
-    # Trim cache (LRU eviction)
-    if len(gray_cache) > MAX_CACHE_SIZE:
-        gray_cache.popitem(last=False)
-
-    return gray
 
 
 # -----------------------------------------------------------
@@ -70,59 +42,82 @@ def load_ai_model():
     pixel_steepness = 0.2
     # ---------------------------------------------------------
 
+    # ---------------------------------------------------------
+    
+    # Map: media_id -> last_frame_gray (numpy array)
+    media_buffers = OrderedDict()
+
     def sigmoid(x):
         return 1 / (1 + np.exp(-x))
 
     def worker_function(data):
-        print("[AI Thread] Computing motion energy...", data)
+        # print("[AI Thread] Computing motion energy...", data)
         inputs_list = data.get("inputs", [])
         outputs = []
 
         for inp in inputs_list:
             input_id = inp.get("id", "unknown")
-            prev_path = inp.get("previous_frame")
+            media_id = inp.get("media_id")
             curr_path = inp.get("current_frame")
 
-            if not prev_path or not curr_path:
+            if not media_id or not curr_path:
                 outputs.append({"id": input_id, "energy": 0.0})
                 continue
 
             try:
-                prev_gray = load_gray(prev_path)
-                curr_gray = load_gray(curr_path)
+                # Load current frame
+                img = cv2.imread(curr_path)
+                if img is None:
+                    # If we can't read the current frame, we can't do anything
+                    outputs.append({"id": input_id, "motion_energy": 0.0})
+                    continue
+                
+                curr_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-                if prev_gray.shape != curr_gray.shape:
-                    h = min(prev_gray.shape[0], curr_gray.shape[0])
-                    w = min(prev_gray.shape[1], curr_gray.shape[1])
-                    prev_gray = cv2.resize(prev_gray, (w, h))
-                    curr_gray = cv2.resize(curr_gray, (w, h))
+                # Check if we have a previous frame for this media_id
+                if media_id in media_buffers:
+                    prev_gray = media_buffers[media_id]
+                    media_buffers.move_to_end(media_id) # Mark as recently used
 
-                # --- "SOFT MASK" SIGMOID LOGIC ---
+                    if prev_gray.shape != curr_gray.shape:
+                        h = min(prev_gray.shape[0], curr_gray.shape[0])
+                        w = min(prev_gray.shape[1], curr_gray.shape[1])
+                        prev_gray = cv2.resize(prev_gray, (w, h))
+                        curr_gray = cv2.resize(curr_gray, (w, h))
 
-                # 1. Compute the absolute difference (0-255) and convert to float
-                diff = cv2.absdiff(prev_gray, curr_gray).astype(np.float32)
+                    # --- "SOFT MASK" SIGMOID LOGIC ---
 
-                # 2. Apply the sigmoid function element-wise to the entire diff image.
-                # This creates a "motion probability map" or "soft mask" where each
-                # pixel has a value from 0.0 to 1.0.
-                x = pixel_steepness * (diff - pixel_midpoint)
-                soft_mask = sigmoid(x)
+                    # 1. Compute the absolute difference (0-255) and convert to float
+                    diff = cv2.absdiff(prev_gray, curr_gray).astype(np.float32)
 
-                # 3. The final score is the mean of this soft mask.
-                # This gives a resolution-independent score from 0.0 to 1.0 that represents
-                # the "average motion contribution" across the entire frame.
-                energy_score = np.mean(soft_mask)
+                    # 2. Apply the sigmoid function element-wise
+                    x = pixel_steepness * (diff - pixel_midpoint)
+                    soft_mask = sigmoid(x)
+
+                    # 3. The final score is the mean of this soft mask.
+                    energy_score = np.mean(soft_mask)
+                else:
+                    # First frame for this media_id, no motion energy yet
+                    energy_score = 0.0
+
+                # Update buffer with current frame for next time
+                media_buffers[media_id] = curr_gray
+                media_buffers.move_to_end(media_id)
+                
+                # Trim buffers if too many active streams
+                if len(media_buffers) > MAX_MEDIA_BUFFERS:
+                    media_buffers.popitem(last=False)
 
                 outputs.append({
                     "id": input_id,
-                    "motion_energy": float(energy_score) # Convert from numpy.float64 to standard float
+                    "motion_energy": float(energy_score)
                 })
 
             except Exception as e:
-                print(f"[AI Thread] Error with {input_id}: {e}")
+                print(f"[AI Thread] Error with {e}", inp)
                 outputs.append({"id": input_id, "motion_energy": 0.0})
 
-        print("[AI Thread] Motion energy computation finished.")
+        # print("[AI Thread] Motion energy computation finished.")
         return {"output": outputs}
 
     return worker_function
