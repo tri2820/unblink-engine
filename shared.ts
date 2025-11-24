@@ -1,4 +1,4 @@
-import type { ServerRegistrationMessage, ServerToEngine } from "./engine";
+import type { ServerRegistrationMessage, WorkerRequest } from "./engine";
 export type WorkerRegistrationMessage = {
     type: "i_am_worker";
     worker_secret: string;
@@ -18,4 +18,4 @@ export type WorkerToEngine = | {
 }
 
 export type RegistrationMessage = ServerRegistrationMessage | WorkerRegistrationMessage;
-export type EngineReceivedMessage = ServerToEngine | WorkerToEngine | RegistrationMessage;
+export type EngineReceivedMessage = WorkerRequest | WorkerToEngine | RegistrationMessage;

@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { ENGINE_VERSION, sendJob, type Client } from "..";
 import { ensureDirExists, FRAMES_DIR, TEMP_DIR } from "../appdir";
-import type { EngineToServer, WorkerRequest, WorkerResponse } from "../engine";
+import type { EngineToServer, WorkerRequest, WorkerResponse, Resource } from "../engine";
 import { logger } from "../logger";
 import type { EngineReceivedMessage, RegistrationMessage, WorkerToEngine } from "../shared";
 
@@ -129,231 +129,182 @@ async function handle__serverMessage(props: {
         return;
     }
 
-    if (decoded.type === "worker_request") {
-        const resourceRefState: {
-            [resource_id: string]: {
+    try {
+        if (decoded.type === "worker_request") {
+            type RefState = {
                 num_ref: number,
                 uri: string,
                 _cleanup: () => void
             }
-        } = {};
+            const resourceRefState: {
+                [resource_id: string]: RefState
+            } = {};
 
-        // Cleanup resource after all workers have responded
-        const unref = (resource_id: string) => {
-            if (!resourceRefState[resource_id]) {
-                return;
-            }
-
-            resourceRefState[resource_id].num_ref--;
-            if (resourceRefState[resource_id].num_ref <= 0) {
-                resourceRefState[resource_id]._cleanup();
-            }
-        };
-
-        // Create job for processing frame
-        const FRAMES_DIR_TENANT = FRAMES_DIR(tenant_id);
-        await ensureDirExists(FRAMES_DIR_TENANT);
-        // This ensures unique filenames even if frames arrive quickly, for proper cleanup
-        const nonce = crypto.randomUUID();
-
-        // Validate 
-        if (decoded.resources) {
-            // All jobs refer to existing resources
-            for (const job of decoded.jobs) {
-                for (const resource of (job.resources || [])) {
-                    const resources_item = decoded.resources?.find((r) => r.id === resource.id)
-                    if (!resources_item) {
-                        console.error("Job refers to non-existent resource:", resource.id);
-                        ws.close(1009, "Job refers to non-existent resource");
-                        return;
-                    }
-                }
-            }
-
-            // Size check
-            for (const resource of decoded.resources) {
-                if (resource.type === 'image') {
-                    if (resource.data.byteLength > FRAME_SIZE_LIMIT) {
-                        console.error("Frame size exceeds limit of", FRAME_SIZE_LIMIT, "bytes.");
-                        ws.close(1009, "Frame size exceeds limit");
-                        return;
-                    }
-                }
-            }
-
-            // All in resources are refered to by at least one job
-            for (const resource of decoded.resources) {
-                if (!decoded.jobs.some((job) => job.resources?.some((r) => r.id === resource.id))) {
-                    console.error("Resource is not refered to by any job:", resource.id);
-                    ws.close(1009, "Resource is not refered to by any job");
+            // Cleanup resource after all workers have responded
+            const unref = (resource_id: string) => {
+                if (!resourceRefState[resource_id]) {
                     return;
                 }
+
+                resourceRefState[resource_id].num_ref--;
+                if (resourceRefState[resource_id].num_ref <= 0) {
+                    resourceRefState[resource_id]._cleanup();
+                }
+            };
+
+            // Create job for processing frame
+            const FRAMES_DIR_TENANT = FRAMES_DIR(tenant_id);
+            await ensureDirExists(FRAMES_DIR_TENANT);
+            // This ensures unique filenames even if frames arrive quickly, for proper cleanup
+            const nonce = crypto.randomUUID();
+
+            // Validate 
+            if (decoded.resources) {
+                // All jobs refer to existing resources
+                for (const job of decoded.jobs) {
+                    for (const resource of (job.resources || [])) {
+                        const resources_item = decoded.resources?.find((r) => r.id === resource.id)
+                        if (!resources_item) {
+                            console.error("Job refers to non-existent resource:", resource.id);
+                            ws.close(1009, "Job refers to non-existent resource");
+                            return;
+                        }
+                    }
+                }
+
+                // Size check
+                for (const resource of decoded.resources) {
+                    if (resource.type === 'image') {
+                        if (resource.data.byteLength > FRAME_SIZE_LIMIT) {
+                            console.error("Frame size exceeds limit of", FRAME_SIZE_LIMIT, "bytes.");
+                            ws.close(1009, "Frame size exceeds limit");
+                            return;
+                        }
+                    }
+                }
+
+                // All in resources are refered to by at least one job
+                for (const resource of decoded.resources) {
+                    if (!decoded.jobs.some((job) => job.resources?.some((r) => r.id === resource.id))) {
+                        console.error("Resource is not refered to by any job:", resource.id);
+                        ws.close(1009, "Resource is not refered to by any job");
+                        return;
+                    }
+                }
             }
-        }
 
-        // Cache resources
-        if (decoded.resources) {
-            for (const resource of decoded.resources) {
-                const file_path = path.join(FRAMES_DIR_TENANT, `${resource.id}-${nonce}.jpg`);
-                fs.writeFileSync(file_path, resource.data);
-
-                resourceRefState[resource.id] = {
-                    num_ref: 0,
-                    uri: file_path,
-                    _cleanup: () => {
-                        fs.unlink(file_path, (err) => {
-                            if (err && (err as any).code !== 'ENOENT') {
-                                console.error("Failed to delete resource:", file_path, err);
+            // Cache resources
+            if (decoded.resources) {
+                for (const resource of decoded.resources) {
+                    if (resource.type === 'image') {
+                        const file_path = path.join(FRAMES_DIR_TENANT, `${resource.id}-${nonce}.jpg`);
+                        fs.writeFileSync(file_path, resource.data);
+                        resourceRefState[resource.id] = {
+                            num_ref: 0,
+                            uri: file_path,
+                            _cleanup: () => {
+                                fs.unlink(file_path, (err) => {
+                                    if (err && (err as any).code !== 'ENOENT') {
+                                        console.error("Failed to delete resource:", file_path, err);
+                                    }
+                                });
                             }
-                        });
+                        }
                     }
                 }
             }
-        }
 
-        // Calculate reference counts based on job usage
-        for (const job of decoded.jobs) {
-            for (const resource of (job.resources || [])) {
-                resourceRefState[resource.id]!.num_ref++;
-            }
-        }
-
-
-        for (const job of decoded.jobs) {
-            // Some translation needed here 
-            // TODO: make all workers accept resources
-            let job_data: undefined | Record<string, any> = undefined;
-            if (job.worker_type === 'caption') {
-                job_data = {
-                    "images": job.resources?.map((resource) => resourceRefState[resource.id]!.uri)
-                }
-            }
-
-            if (job.worker_type === 'embedding') {
-                job_data = {
-                    "filepath": job.resources?.map((resource) => resourceRefState[resource.id]!.uri)[0]
-                }
-            }
-
-            if (job.worker_type === 'object_detection') {
-                job_data = {
-                    "filepath": job.resources?.map((resource) => resourceRefState[resource.id]!.uri)[0]
-                }
-            }
-
-            if (job.worker_type === 'motion_energy') {
-                job_data = {
-                    current_frame: job.resources?.map((resource) => resourceRefState[resource.id]!.uri)[0],
-                    media_id: job.cross_job_id
-                }
-            }
-
-            if (!job_data) {
-                console.error("Invalid job type:", job.worker_type);
-                ws.close(1009, "Invalid job type");
-                return;
-            }
-
-            job_data.cross_job_id = job.cross_job_id;
-
-            sendJob(job_data, job.worker_type, {
-                async cont(output) {
-                    const msg: EngineToServer = {
-                        type: "worker_response",
-                        output,
-                        job_id: job.job_id,
-                    }
-
-                    const encoded = encode(msg);
-                    client.ws.send(encoded);
-                    for (const resource of job.resources || []) {
-                        unref(resource.id);
+            // Calculate reference counts based on job usage
+            for (const job of decoded.jobs) {
+                for (const resource of (job.resources || [])) {
+                    // text resources are not cached
+                    if (resourceRefState[resource.id]) {
+                        resourceRefState[resource.id]!.num_ref++;
                     }
                 }
-            });
+            }
+
+            const getFullResource = (r: { id: string }) => {
+                const resource = decoded.resources?.find((r2) => r2.id === r.id)
+                return resource
+            }
+
+            const getRefState = (r: { id: string }): RefState => {
+                const refState = resourceRefState[r.id]
+                if (!refState) {
+                    throw new Error("Resource not found");
+                }
+                return refState
+            }
+
+            for (const job of decoded.jobs) {
+                // type guard
+                const notEmpty: (r: Resource | undefined) => r is Resource = (r) => r !== undefined
+                const _resources = job.resources?.map(getFullResource).filter(notEmpty)
+
+
+                // Some translation needed here 
+                // TODO: make all workers accept resources
+                let job_data: undefined | Record<string, any> = undefined;
+                if (job.worker_type === 'caption') {
+                    job_data = {
+                        "images": _resources?.filter(r => r.type === 'image').map((r) => getRefState(r).uri),
+                        "query": _resources?.filter(r => r.type === 'text').map((r) => r.content)[0],
+                    }
+
+                }
+
+                if (job.worker_type === 'embedding') {
+                    job_data = {
+                        "filepath": _resources?.filter(r => r.type === 'image').map((r) => getRefState(r).uri)[0]
+                    }
+                }
+
+                if (job.worker_type === 'object_detection') {
+                    job_data = {
+                        "filepath": _resources?.filter(r => r.type === 'image').map((r) => getRefState(r).uri)[0]
+                    }
+                }
+
+                if (job.worker_type === 'motion_energy') {
+                    job_data = {
+                        current_frame: _resources?.filter(r => r.type === 'image').map((r) => getRefState(r).uri)[0],
+                        media_id: job.cross_job_id
+                    }
+                }
+
+                if (!job_data) {
+                    console.error("Invalid job type:", job.worker_type);
+                    ws.close(1009, "Invalid job type");
+                    return;
+                }
+
+                job_data.cross_job_id = job.cross_job_id;
+
+                sendJob(job_data, job.worker_type, {
+                    async cont(output) {
+                        const msg: EngineToServer = {
+                            type: "worker_response",
+                            output,
+                            job_id: job.job_id,
+                        }
+
+                        const encoded = encode(msg);
+                        client.ws.send(encoded);
+                        for (const resource of job.resources || []) {
+                            unref(resource.id);
+                        }
+                    }
+                });
+            }
+
+
+            return;
         }
-
-
-        // if (decoded.worker_id === 'caption') {
-        //     const tempDir = TEMP_DIR();
-
-        //     const image_paths: string[] = [];
-        //     const nonce = crypto.randomUUID();
-
-        //     for (const resource of decoded.resources) {
-        //         if (resource.type === 'image') {
-        //             const file_path = path.join(tempDir, `${resource.type}-${nonce}.jpg`);
-        //             fs.writeFileSync(file_path, resource.data);
-        //             image_paths.push(file_path);
-        //         }
-        //     }
-
-        //     if (image_paths.length === 0) {
-        //         console.error("No valid frames found in moment_enrichment");
-        //         return;
-        //     }
-
-        //     const job = {
-        //         "images": image_paths,
-        //         "query": decoded.query
-        //     };
-
-        //     sendJob(job, 'caption', {
-        //         async cont(output) {
-        //             // const response_text = output.response || "";
-        //             const msg: WorkerResponse = {
-        //                 type: "worker_response",
-        //                 output,
-        //                 worker_id: 'caption',
-        //                 identifier: {
-        //                     media_id: decoded.identifier.media_id,
-        //                     moment_id: decoded.identifier.moment_id,
-        //                 }
-        //             }
-        //             const encoded = encode(msg);
-        //             client.ws.send(encoded);
-        //             // let enrichment;
-
-        //             // try {
-        //             //     // Attempt to parse JSON from the response
-        //             //     // Sometimes models wrap JSON in markdown code blocks, so strip them if present
-        //             //     const cleaned = response_text.replace(/```json/g, '').replace(/```/g, '').trim();
-        //             //     enrichment = JSON.parse(cleaned);
-        //             // } catch (e) {
-        //             //     console.error("Failed to parse JSON from worker response:", response_text);
-        //             //     // Fallback if parsing fails
-        //             //     enrichment = {
-        //             //         title: "Activity Detected",
-        //             //         short_description: response_text.length > 100 ? response_text.substring(0, 97) + "..." : response_text,
-        //             //         long_description: response_text
-        //             //     };
-        //             // }
-
-        //             // // Ensure required keys exist
-        //             // if (!enrichment.title) enrichment.title = "Activity Detected";
-        //             // if (!enrichment.short_description) enrichment.short_description = enrichment.long_description ? (enrichment.long_description.substring(0, 97) + "...") : "No description";
-        //             // if (!enrichment.long_description) enrichment.long_description = enrichment.short_description;
-
-        //             // const msg: EngineToServer = {
-        //             //     type: "moment_enrichment",
-        //             //     media_id: decoded.identifier.media_id,
-        //             //     moment_id: decoded.identifier.moment_id,
-        //             //     enrichment
-        //             // };
-
-        //             // const encoded = encode(msg);
-        //             // client.ws.send(encoded);
-
-        //             // Cleanup files
-        //             for (const p of image_paths) {
-        //                 fs.unlink(p, (err) => {
-        //                     if (err) console.error("Failed to delete moment frame:", p, err);
-        //                 });
-        //             }
-        //         }
-        //     });
-        // }
-        return;
+    } catch (e) {
+        console.error('Wow', e);
+        console.trace();
+        ws.close(1008, "Error running job");
     }
 }
 

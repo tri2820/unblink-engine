@@ -13,7 +13,7 @@ from PIL import Image
 
 # Simple VQA
 image = Image.open("./test.jpg")
-result = moondream.query(image=image, question="What's in this image?")
+result = moondream.query(image=image, question="What's in this image?", reasoning=False)
 print(result["answer"])
 
 # Different caption lengths

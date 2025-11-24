@@ -13,13 +13,20 @@ export type RemoteJob = {
     }[]
 }
 
+export type Resource = ({
+    type: 'image',
+    data: Uint8Array,
+} | {
+    type: 'text',
+    // kind: 'query' | 'caption',
+    content: string
+}) & {
+    id: string,
+}
+
 export type WorkerRequest = {
     type: "worker_request",
-    resources?: {
-        id: string,
-        type: 'image',
-        data: Uint8Array,
-    }[],
+    resources?: Resource[],
     jobs: RemoteJob[]
 }
 
