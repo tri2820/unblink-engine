@@ -63,10 +63,10 @@ tmux new-window -t "$SESSION" -n worker_motion_energy
 MOTION_ENERGY_CMD="WORKER_TYPE=\"motion_energy\" MAX_LATENCY_MS=\"300\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_motion_energy"
 tmux send-keys -t "$SESSION:worker_motion_energy" "cd \"$PROJECT_DIR/py\" && $MOTION_ENERGY_CMD" C-m
 
-# 
-tmux new-window -t "$SESSION" -n worker_llm
-LLM_CMD="WORKER_TYPE=\"llm\" MAX_LATENCY_MS=\"5000\" MAX_BATCH_SIZE=\"4\" MODEL_ID=\"microsoft/Phi-4-mini-instruct\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_llm"
-tmux send-keys -t "$SESSION:worker_llm" "cd \"$PROJECT_DIR/py\" && $LLM_CMD" C-m
+# # 
+# tmux new-window -t "$SESSION" -n worker_llm
+# LLM_CMD="WORKER_TYPE=\"llm\" MAX_LATENCY_MS=\"5000\" MAX_BATCH_SIZE=\"4\" MODEL_ID=\"microsoft/Phi-4-mini-instruct\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_llm"
+# tmux send-keys -t "$SESSION:worker_llm" "cd \"$PROJECT_DIR/py\" && $LLM_CMD" C-m
 
 # --- Finalization ---
 # Select the 'distributor' window by default

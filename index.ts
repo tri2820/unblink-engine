@@ -6,6 +6,8 @@ import { createWsMessageHandler } from './src/handle_ws_message';
 import { parseJsonFromString } from './src/utils';
 import type { Moment, Summary } from './engine';
 
+export const ENGINE_VERSION = "1.0.1";
+
 export type MediaUnit = {
     id: string;
     path: string;
@@ -102,7 +104,6 @@ Bun.serve({
 
         // Dedicated endpoint for WebSocket upgrades
         if (url.pathname === "/ws") {
-            logger.info('Upgrading to WebSocket');
             const upgraded = server.upgrade(req);
             if (upgraded) {
                 // Bun automatically handles the response for successful upgrades
@@ -225,7 +226,7 @@ Bun.serve({
         },
         "/version": {
             GET() {
-                return new Response(JSON.stringify({ version: "1.0.0" }), {
+                return new Response(JSON.stringify({ version: ENGINE_VERSION }), {
                     status: 200,
                     headers: {
                         "Content-Type": "application/json",

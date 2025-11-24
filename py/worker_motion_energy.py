@@ -61,7 +61,7 @@ def load_ai_model():
             curr_path = inp.get("current_frame")
 
             if not media_id or not curr_path:
-                outputs.append({"id": input_id, "energy": 0.0})
+                outputs.append({"id": input_id, "error": "Missing media_id or current_frame"})
                 continue
 
             try:
@@ -69,7 +69,7 @@ def load_ai_model():
                 img = cv2.imread(curr_path)
                 if img is None:
                     # If we can't read the current frame, we can't do anything
-                    outputs.append({"id": input_id, "motion_energy": 0.0})
+                    outputs.append({"id": input_id, "error": "Failed to read current frame"})
                     continue
                 
                 curr_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -115,7 +115,7 @@ def load_ai_model():
 
             except Exception as e:
                 print(f"[AI Thread] Error with {e}", inp)
-                outputs.append({"id": input_id, "motion_energy": 0.0})
+                outputs.append({"id": input_id, "error": str(e)})
 
         # print("[AI Thread] Motion energy computation finished.")
         return {"output": outputs}

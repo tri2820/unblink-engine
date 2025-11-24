@@ -1,21 +1,33 @@
 export type ServerRegistrationMessage = {
     type: "i_am_server";
+    version: string;
     token?: string;
 }
 
-export type ServerToEngine =
-    | {
-        type: "frame_binary";
-        workers: Partial<{
-            'vlm': true,
-            'object_detection': true,
-            'embedding': true,
-            'motion_energy': true,
-        }>
-        frame_id: string;
-        media_id: string;
-        frame: Uint8Array;
-    }
+export type RemoteJob = {
+    job_id: string,
+    worker_type: 'caption' | 'embedding' | 'object_detection' | 'motion_energy',
+    cross_job_id?: string,
+    resources?: {
+        id: string,
+    }[]
+}
+
+export type WorkerRequest = {
+    type: "worker_request",
+    resources?: {
+        id: string,
+        type: 'image',
+        data: Uint8Array,
+    }[],
+    jobs: RemoteJob[]
+}
+
+export type WorkerResponse = {
+    type: "worker_response",
+    output: any,
+    job_id: string,
+}
 
 export type DetectionObject = {
     label: string;
@@ -28,26 +40,7 @@ export type DetectionObject = {
     }
 }
 
-export type EngineToServer = {
-    type: "frame_description";
-    frame_id: string;
-    media_id: string;
-    description: string;
-} | {
-    type: "frame_embedding";
-    frame_id: string;
-    media_id: string;
-    embedding: number[];
-} | {
-    type: "frame_object_detection";
-    media_id: string;
-    frame_id: string;
-    objects: DetectionObject[];
-} | {
-    type: "media_summary",
-    media_id: string;
-    summary: Summary
-} | FrameMotionEnergyMessage
+export type EngineToServer = WorkerResponse
 
 export type FrameMotionEnergyMessage = {
     type: "frame_motion_energy";

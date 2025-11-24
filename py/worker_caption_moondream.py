@@ -6,11 +6,8 @@ BATCH INPUT FORMAT (Accepts a standard 'messages' array per input ID):
   "inputs": [
     {
       "id": "req_001",
-      "image_path": "/path/to/image1.jpg",
-    },
-    {
-      "id": "req_002",
-      "image_path": "/path/to/image2.jpg",
+      "images": ["/path/to/image1.jpg", "/path/to/image2.jpg"],
+      "query": "Optional query string"
     }
   ]
 }
@@ -59,23 +56,74 @@ def load_ai_model():
         outputs = []
         message_inputs = data.get('inputs', [])
         for item in message_inputs:
-            image_path = item.get('image_path')
-            if not image_path or not os.path.exists(image_path):
+            # Handle multiple images (strict)
+            image_paths = item.get('images', [])
+            
+            if not image_paths or not isinstance(image_paths, list):
+                 outputs.append({
+                    "id": item.get('id'),
+                    "response": "Error: 'images' list is required."
+                })
+                 continue
+
+            loaded_images = []
+            for p in image_paths:
+                if os.path.exists(p):
+                    loaded_images.append(Image.open(p))
+            
+            if not loaded_images:
                 outputs.append({
                     "id": item.get('id'),
-                    "response": "Error: Image path is invalid or does not exist."
+                    "response": "Error: No valid images found."
                 })
                 continue
 
-            image = Image.open(image_path)
+            # Determine resize limit
+            # If only 1 image, 500px limit. If multiple, 300px limit per image.
+            max_edge = 500 if len(loaded_images) == 1 else 300
+            
+            resized_images = []
+            for img in loaded_images:
+                if max(img.size) > max_edge:
+                    ratio = max_edge / max(img.size)
+                    new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+                    # print(f"[AI Thread] Resized image to {new_size}")
+                resized_images.append(img)
+            
+            # Stitch if multiple
+            if len(resized_images) > 1:
+                total_width = sum(img.width for img in resized_images)
+                max_height = max(img.height for img in resized_images)
+                
+                stitched = Image.new('RGB', (total_width, max_height))
+                x_offset = 0
+                for img in resized_images:
+                    stitched.paste(img, (x_offset, 0))
+                    x_offset += img.width
+                image = stitched
+                print(f"[AI Thread] Stitched {len(resized_images)} images into {image.size}")
+            else:
+                image = resized_images[0]
 
-            # Different caption lengths
-            long = moondream.caption(image, length="long")
-            print(f"[AI Thread] Generated caption:", long)
-            outputs.append({
-                "id": item.get('id'),
-                "response": long['caption']
-            })
+            # Check for query
+            query = item.get('query')
+            if query:
+                print(f"[AI Thread] Running query: {query}")
+                result = moondream.query(image=image, question=query)
+                print(f"[AI Thread] Query result:", result)
+                outputs.append({
+                    "id": item.get('id'),
+                    "response": result['answer']
+                })
+            else:
+                # Different caption lengths
+                long = moondream.caption(image, length="long")
+                print(f"[AI Thread] Generated caption:", long)
+                outputs.append({
+                    "id": item.get('id'),
+                    "response": long['caption']
+                })
 
         result = { "output": outputs }
         print("[AI Thread] Heavy AI workload finished.")

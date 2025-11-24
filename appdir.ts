@@ -14,6 +14,9 @@ export const APP_NAME = "unblink-engine";
 export const RUNTIME_DIR = path.join(appdir(), APP_NAME);
 export const FILES_DIR = (tenant_id: string) => path.join(RUNTIME_DIR, tenant_id, 'files');
 export const FRAMES_DIR = (tenant_id: string) => path.join(FILES_DIR(tenant_id), 'frames');
+export const TEMP_DIR = () => path.join(RUNTIME_DIR, 'temp');
 
 // Create directories if they don't exist
 await ensureDirExists(RUNTIME_DIR);
+await ensureDirExists(TEMP_DIR());
+
