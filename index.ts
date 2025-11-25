@@ -39,19 +39,27 @@ export type Client = {
 }
 
 
-export type JobMap = Map<string, { cont: (result: Record<string, any>) => void }>;
+export type JobMap = Map<string, { cont: (result: Record<string, any>) => void; timeout?: NodeJS.Timeout }>;
 const job_map = new Map() as JobMap;
 const clients = new Map<ServerWebSocket<unknown>, Client>();
 const ws_handler = createWsMessageHandler(() => clients, () => job_map);
 
-
+const MAX_JOB_WAIT_MS = 5 * 60 * 1000; // 5 minutes
 export function sendJob(job: Record<string, any>, worker_type: string, opts?: {
     cont: (result: Record<string, any>) => void;
 }) {
     job.id = crypto.randomUUID();
     if (opts?.cont) {
+        const timeout = setTimeout(() => {
+            logger.warn({
+                worker_type,
+                job
+            }, `Job timed out after ${MAX_JOB_WAIT_MS / 1000} seconds without response`);
+            job_map.delete(job.id);
+        }, MAX_JOB_WAIT_MS);
         job_map.set(job.id, {
-            cont: opts.cont
+            cont: opts.cont,
+            timeout
         });
     }
 

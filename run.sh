@@ -30,16 +30,15 @@ EMBEDDING_CMD="WORKER_TYPE=\"embedding\" MAX_LATENCY_MS=\"5000\" uv run --env-fi
 tmux send-keys -t "$SESSION:worker_embedding" "cd \"$PROJECT_DIR/py\" && $EMBEDDING_CMD" C-m
 
 
-# # Create and run the general VLM worker
-# tmux new-window -t "$SESSION" -n worker_vlm 
-# VLM_CMD="WORKER_TYPE=\"vlm\" MAX_LATENCY_MS=\"5000\" MAX_BATCH_SIZE=\"8\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_vlm"
-# tmux send-keys -t "$SESSION:worker_vlm" "cd \"$PROJECT_DIR/py\" && $VLM_CMD" C-m
-
-
 # Create and run the general VLM worker
-tmux new-window -t "$SESSION" -n worker_caption_moondream
-CAPTION_CMD="WORKER_TYPE=\"caption\" MAX_LATENCY_MS=\"5000\" MAX_BATCH_SIZE=\"1\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_caption_moondream"
-tmux send-keys -t "$SESSION:worker_caption_moondream" "cd \"$PROJECT_DIR/py\" && $CAPTION_CMD" C-m
+tmux new-window -t "$SESSION" -n worker_vlm 
+VLM_CMD="WORKER_TYPE=\"vlm\" MAX_LATENCY_MS=\"5000\" MAX_BATCH_SIZE=\"32\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_vlm"
+tmux send-keys -t "$SESSION:worker_vlm" "cd \"$PROJECT_DIR/py\" && $VLM_CMD" C-m
+
+# # Create and run the caption worker
+# tmux new-window -t "$SESSION" -n worker_caption_moondream
+# CAPTION_CMD="WORKER_TYPE=\"caption\" MAX_LATENCY_MS=\"5000\" MAX_BATCH_SIZE=\"1\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_caption_moondream"
+# tmux send-keys -t "$SESSION:worker_caption_moondream" "cd \"$PROJECT_DIR/py\" && $CAPTION_CMD" C-m
 
 
 # Create and run the fast embedding worker

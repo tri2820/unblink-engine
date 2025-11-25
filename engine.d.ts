@@ -6,7 +6,7 @@ export type ServerRegistrationMessage = {
 
 export type RemoteJob = {
     job_id: string,
-    worker_type: 'caption' | 'embedding' | 'object_detection' | 'motion_energy',
+    worker_type: 'caption' | 'embedding' | 'object_detection' | 'motion_energy' | 'vlm',
     cross_job_id?: string,
     resources?: {
         id: string,
@@ -18,7 +18,7 @@ export type Resource = ({
     data: Uint8Array,
 } | {
     type: 'text',
-    // kind: 'query' | 'caption',
+    kind?: string,
     content: string
 }) & {
     id: string,

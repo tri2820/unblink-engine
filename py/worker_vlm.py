@@ -116,17 +116,21 @@ def load_ai_model():
             return_dict=True,
             return_tensors="pt",
             padding=True,
+            padding_side="left"
         )
 
         inputs = inputs.to('cuda')
 
-        raw_outputs = model.generate(**inputs, max_new_tokens=20000000)
+        raw_outputs = model.generate(**inputs, max_new_tokens=20000)
+
+        # Decode all outputs at once using batch_decode
+        generated_texts = processor.batch_decode(
+            raw_outputs,
+            skip_special_tokens=True,
+        )
 
         outputs = []
-        i = 0
-        for raw_output in raw_outputs:
-            tok_ids = raw_output.cpu().tolist()
-            raw_text = processor.decode(tok_ids, skip_special_tokens=True)
+        for i, raw_text in enumerate(generated_texts):
             # Keep previous logic for extracting assistant reply
             response = raw_text.split("Assistant: ")[-1].strip()
             # Include image name in output
@@ -134,7 +138,6 @@ def load_ai_model():
                 "id": message_inputs[i]['id'],
                 "response": response
             })
-            i += 1
 
         result = { "output": outputs }
         print("[AI Thread] Heavy AI workload finished.")

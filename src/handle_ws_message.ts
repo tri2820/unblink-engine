@@ -2,7 +2,7 @@ import { file, type ServerWebSocket } from "bun";
 import { decode, encode } from "cbor-x";
 import fs from 'fs';
 import path from 'path';
-import { ENGINE_VERSION, sendJob, type Client } from "..";
+import { ENGINE_VERSION, sendJob, type Client, type JobMap } from "..";
 import { ensureDirExists, FRAMES_DIR, TEMP_DIR } from "../appdir";
 import type { EngineToServer, WorkerRequest, WorkerResponse, Resource } from "../engine";
 import { logger } from "../logger";
@@ -14,7 +14,7 @@ const blacklist_servers_ip = new Set<string>();
 
 async function handle_register(props: {
     decoded: RegistrationMessage,
-    job_map: Map<string, { cont: (result: Record<string, any>) => void }>,
+    job_map: JobMap,
     client: Client,
     ws: ServerWebSocket<unknown>,
 }) {
@@ -79,7 +79,7 @@ async function handle_register(props: {
 
 async function handle__workerMessage(props: {
     decoded: WorkerToEngine,
-    job_map: Map<string, { cont: (result: Record<string, any>) => void }>,
+    job_map: JobMap,
     client: Client,
     ws: ServerWebSocket<unknown>,
 }) {
@@ -102,14 +102,16 @@ async function handle__workerMessage(props: {
                 logger.error("No job found for worker output ID:", output.id);
                 continue;
             }
+            if (job.timeout) clearTimeout(job.timeout);
             job.cont(output);
+            job_map.delete(output.id);
         }
         return;
     }
 }
 async function handle__serverMessage(props: {
     decoded: WorkerRequest,
-    job_map: Map<string, { cont: (result: Record<string, any>) => void }>,
+    job_map: JobMap,
     client: Client,
     ws: ServerWebSocket<unknown>,
 }) {
@@ -273,6 +275,44 @@ async function handle__serverMessage(props: {
                     }
                 }
 
+                let PRINT_DEBUG = false;
+                if (job.worker_type === 'vlm') {
+                    const images = _resources?.filter(r => r.type === 'image').map((r) => ({
+                        type: "image",
+                        image: getRefState(r).uri
+                    }));
+                    const user_text = _resources?.filter(r => r.type === 'text' && r.kind === 'user_text').map((r) => (r as { type: 'text', content: string }).content)[0];
+                    const system_prompt = _resources?.filter(r => r.type === 'text' && r.kind === 'system_prompt').map((r) => (r as { type: 'text', content: string }).content)[0];
+
+                    const messages = [];
+                    if (system_prompt) {
+                        messages.push({
+                            role: "system",
+                            content: [{ type: "text", text: system_prompt }]
+                        });
+                    }
+
+                    const user_content: any[] = [...(images || [])];
+                    if (user_text) {
+                        user_content.push({ type: "text", text: user_text });
+                    }
+
+                    messages.push({
+                        role: "user",
+                        content: user_content
+                    });
+
+                    job_data = {
+                        messages
+                    }
+
+                    if (system_prompt) PRINT_DEBUG = true;
+                }
+
+                if (PRINT_DEBUG) {
+                    console.log("Submit VLM job");
+                }
+
                 if (!job_data) {
                     console.error("Invalid job type:", job.worker_type);
                     ws.close(1009, "Invalid job type");
@@ -289,6 +329,9 @@ async function handle__serverMessage(props: {
                             job_id: job.job_id,
                         }
 
+                        if (PRINT_DEBUG) {
+                            console.log("VLM job output:", JSON.stringify(output, null, 2));
+                        }
                         const encoded = encode(msg);
                         client.ws.send(encoded);
                         for (const resource of job.resources || []) {
@@ -309,7 +352,7 @@ async function handle__serverMessage(props: {
 }
 
 
-export function createWsMessageHandler(clients$: () => Map<ServerWebSocket<unknown>, Client>, job_map$: () => Map<string, { cont: (result: Record<string, any>) => void }>) {
+export function createWsMessageHandler(clients$: () => Map<ServerWebSocket<unknown>, Client>, job_map$: () => JobMap) {
     return async function handleWsMessage(ws: ServerWebSocket<unknown>, message: string | Buffer<ArrayBuffer>) {
         const clients = clients$();
         const job_map = job_map$();
