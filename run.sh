@@ -62,9 +62,14 @@ tmux new-window -t "$SESSION" -n worker_motion_energy
 MOTION_ENERGY_CMD="WORKER_TYPE=\"motion_energy\" MAX_LATENCY_MS=\"300\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_motion_energy"
 tmux send-keys -t "$SESSION:worker_motion_energy" "cd \"$PROJECT_DIR/py\" && $MOTION_ENERGY_CMD" C-m
 
-# Create and run the video segmentation worker (SAM3)
+# # Create and run the video segmentation worker (SAM3)
+# tmux new-window -t "$SESSION" -n worker_segmentation
+# SEGMENTATION_CMD="WORKER_TYPE=\"segmentation\" MAX_LATENCY_MS=\"500\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_sam3"
+# tmux send-keys -t "$SESSION:worker_segmentation" "cd \"$PROJECT_DIR/py\" && $SEGMENTATION_CMD" C-m
+
+# Create and run the image segmentation worker (SAM3 - simplified)
 tmux new-window -t "$SESSION" -n worker_segmentation
-SEGMENTATION_CMD="WORKER_TYPE=\"segmentation\" MAX_LATENCY_MS=\"500\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_sam3"
+SEGMENTATION_CMD="WORKER_TYPE=\"segmentation\" MAX_LATENCY_MS=\"500\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_segmentation_image"
 tmux send-keys -t "$SESSION:worker_segmentation" "cd \"$PROJECT_DIR/py\" && $SEGMENTATION_CMD" C-m
 
 # # 
