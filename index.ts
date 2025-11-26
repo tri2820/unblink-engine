@@ -44,6 +44,8 @@ export function sendJob(job: Record<string, any>, worker_type: string, opts?: {
     cont: (result: Record<string, any>) => void;
 }) {
     job.id = crypto.randomUUID();
+    job.timestamp = Date.now(); // Add timestamp for tracking latest jobs
+    
     if (opts?.cont) {
         const timeout = setTimeout(() => {
             logger.warn({
@@ -84,8 +86,10 @@ export function workerFlush(c: Client) {
     // // This function might be called from timeout, so check everything
     if (!c.ws || c.ws.readyState !== WebSocket.OPEN) return;
     if (!c.worker_config) return;
+    
     const inputs = structuredClone(c.worker_config.gathered);
     c.worker_config.gathered = []
+    
     const msg = encode({
         inputs
     })
