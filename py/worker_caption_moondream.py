@@ -32,10 +32,17 @@ from ws_client_handler import client_handler
 import time
 import json
 import torch
+import sys
+import os
+
+# Use transformers v4.53 for moondream compatibility
+script_dir = os.path.dirname(os.path.abspath(__file__))
+transformers_v4_path = os.path.join(script_dir, 'transformers-v4.53', 'src')
+sys.path.insert(0, transformers_v4_path)
+
 from transformers import AutoModelForCausalLM
 import torch
 from PIL import Image
-import os
 import cv2
 
 def load_ai_model():
@@ -44,7 +51,7 @@ def load_ai_model():
     moondream = AutoModelForCausalLM.from_pretrained(
         "moondream/moondream3-preview",
         trust_remote_code=True,
-        dtype=torch.bfloat16,
+        torch_dtype=torch.bfloat16,
         device_map={"": "cuda"},
     )
     moondream.compile()

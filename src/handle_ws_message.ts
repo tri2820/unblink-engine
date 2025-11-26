@@ -8,7 +8,7 @@ import type { EngineToServer, WorkerRequest, WorkerResponse, Resource } from "..
 import { logger } from "../logger";
 import type { EngineReceivedMessage, RegistrationMessage, WorkerToEngine } from "../shared";
 
-const FRAME_SIZE_LIMIT = 2 * 1024 * 1024; // 2 MB
+const RESOURCE_DATA_LIMIT = 2 * 1024 * 1024; // 2 MB
 
 const blacklist_servers_ip = new Set<string>();
 
@@ -186,13 +186,23 @@ async function handle__serverMessage(props: {
 
                 // Size check
                 for (const resource of decoded.resources) {
-                    if (resource.type === 'image') {
-                        if (resource.data.byteLength > FRAME_SIZE_LIMIT) {
-                            console.error("Frame size exceeds limit of", FRAME_SIZE_LIMIT, "bytes.");
+                    if (resource.data instanceof Uint8Array) {
+                        if (resource.data.byteLength > RESOURCE_DATA_LIMIT) {
+                            console.error("Frame size exceeds limit of", RESOURCE_DATA_LIMIT, "bytes.");
                             ws.close(1009, "Frame size exceeds limit");
+                            return;
+                        }    
+                    } else if (typeof resource.data === 'string') {
+                        // for document type, we can set a limit too if needed
+                        const byteLength = Buffer.byteLength(resource.data, 'utf8');
+                        if (byteLength > RESOURCE_DATA_LIMIT) {
+                            console.error("Document size exceeds limit of", RESOURCE_DATA_LIMIT, "bytes.");
+                            ws.close(1009, "Document size exceeds limit");
                             return;
                         }
                     }
+
+                    
                 }
 
                 // All in resources are refered to by at least one job
@@ -227,7 +237,7 @@ async function handle__serverMessage(props: {
                         }
                     } else if (resource.type === 'document') {
                         const file_path = path.join(FRAMES_DIR_TENANT, `${resource.id}-${nonce}.txt`);
-                        fs.writeFileSync(file_path, resource.content, 'utf8');
+                        fs.writeFileSync(file_path, resource.data, 'utf8');
                         resourceRefState[resource.id] = {
                             num_ref: 0,
                             uri: file_path,
