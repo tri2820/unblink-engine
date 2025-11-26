@@ -121,7 +121,7 @@ def load_ai_model():
 
         inputs = inputs.to('cuda')
 
-        raw_outputs = model.generate(**inputs, max_new_tokens=20000)
+        raw_outputs = model.generate(**inputs, max_new_tokens=20000000)
 
         # Decode all outputs at once using batch_decode
         generated_texts = processor.batch_decode(
