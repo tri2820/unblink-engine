@@ -160,14 +160,24 @@ async function handle__serverMessage(props: {
             // This ensures unique filenames even if frames arrive quickly, for proper cleanup
             const nonce = crypto.randomUUID();
 
+            // Helper to collect all resource IDs from job.input
+            const collectResourceIdsFromInput = (obj: any): string[] => {
+                if (!obj) return [];
+                if (obj.__type === 'resource-ref') return [obj.id];
+                if (Array.isArray(obj)) return obj.flatMap(collectResourceIdsFromInput);
+                if (typeof obj === 'object') return Object.values(obj).flatMap(collectResourceIdsFromInput);
+                return [];
+            };
+            
             // Validate 
             if (decoded.resources) {
                 // All jobs refer to existing resources
                 for (const job of decoded.jobs) {
-                    for (const resource of (job.resources || [])) {
-                        const resources_item = decoded.resources?.find((r) => r.id === resource.id)
+                    const resourceIds = collectResourceIdsFromInput(job.input);
+                    for (const resourceId of resourceIds) {
+                        const resources_item = decoded.resources?.find((r) => r.id === resourceId)
                         if (!resources_item) {
-                            console.error("Job refers to non-existent resource:", resource.id);
+                            console.error("Job refers to non-existent resource:", resourceId);
                             ws.close(1009, "Job refers to non-existent resource");
                             return;
                         }
@@ -187,7 +197,10 @@ async function handle__serverMessage(props: {
 
                 // All in resources are refered to by at least one job
                 for (const resource of decoded.resources) {
-                    if (!decoded.jobs.some((job) => job.resources?.some((r) => r.id === resource.id))) {
+                    if (!decoded.jobs.some((job) => {
+                        const resourceIds = collectResourceIdsFromInput(job.input);
+                        return resourceIds.includes(resource.id);
+                    })) {
                         console.error("Resource is not refered to by any job:", resource.id);
                         ws.close(1009, "Resource is not refered to by any job");
                         return;
@@ -212,16 +225,40 @@ async function handle__serverMessage(props: {
                                 });
                             }
                         }
+                    } else if (resource.type === 'document') {
+                        const file_path = path.join(FRAMES_DIR_TENANT, `${resource.id}-${nonce}.txt`);
+                        fs.writeFileSync(file_path, resource.content, 'utf8');
+                        resourceRefState[resource.id] = {
+                            num_ref: 0,
+                            uri: file_path,
+                            _cleanup: () => {
+                                fs.unlink(file_path, (err) => {
+                                    if (err && (err as any).code !== 'ENOENT') {
+                                        console.error("Failed to delete resource:", file_path, err);
+                                    }
+                                });
+                            }
+                        }
                     }
                 }
             }
 
             // Calculate reference counts based on job usage
+            // Helper to collect all resource IDs from job.input
+            const collectResourceIds = (obj: any): string[] => {
+                if (!obj) return [];
+                if (obj.__type === 'resource-ref') return [obj.id];
+                if (Array.isArray(obj)) return obj.flatMap(collectResourceIds);
+                if (typeof obj === 'object') return Object.values(obj).flatMap(collectResourceIds);
+                return [];
+            };
+            
             for (const job of decoded.jobs) {
-                for (const resource of (job.resources || [])) {
+                const resourceIds = collectResourceIds(job.input);
+                for (const resourceId of resourceIds) {
                     // text resources are not cached
-                    if (resourceRefState[resource.id]) {
-                        resourceRefState[resource.id]!.num_ref++;
+                    if (resourceRefState[resourceId]) {
+                        resourceRefState[resourceId]!.num_ref++;
                     }
                 }
             }
@@ -239,87 +276,41 @@ async function handle__serverMessage(props: {
                 return refState
             }
 
+            // Helper to resolve ResourceRef objects in job.input
+            const resolveResourceRefs = (obj: any): any => {
+                if (obj === null || obj === undefined) return obj;
+                
+                if (obj.__type === 'resource-ref') {
+                    const resource = decoded.resources?.find(r => r.id === obj.id);
+                    if (!resource) return obj;
+                    
+                    // Replace ref with URI (all resources are saved to files)
+                    return getRefState(resource).uri;
+                }
+                
+                if (Array.isArray(obj)) {
+                    return obj.map(resolveResourceRefs);
+                }
+                
+                if (typeof obj === 'object') {
+                    const resolved: any = {};
+                    for (const key in obj) {
+                        resolved[key] = resolveResourceRefs(obj[key]);
+                    }
+                    return resolved;
+                }
+                
+                return obj;
+            };
+
             for (const job of decoded.jobs) {
-                // type guard
-                const notEmpty: (r: Resource | undefined) => r is Resource = (r) => r !== undefined
-                const _resources = job.resources?.map(getFullResource).filter(notEmpty)
-
-
-                // Some translation needed here 
-                // TODO: make all workers accept resources
-                let job_data: undefined | Record<string, any> = undefined;
-                if (job.worker_type === 'caption') {
-                    job_data = {
-                        "images": _resources?.filter(r => r.type === 'image').map((r) => getRefState(r).uri),
-                        "query": _resources?.filter(r => r.type === 'text').map((r) => r.content)[0],
-                    }
-
-                }
-
-                if (job.worker_type === 'embedding') {
-                    job_data = {
-                        "filepath": _resources?.filter(r => r.type === 'image').map((r) => getRefState(r).uri)[0]
-                    }
-                }
-
-                if (job.worker_type === 'object_detection') {
-                    job_data = {
-                        "filepath": _resources?.filter(r => r.type === 'image').map((r) => getRefState(r).uri)[0]
-                    }
-                }
-
-                if (job.worker_type === 'motion_energy') {
-                    job_data = {
-                        current_frame: _resources?.filter(r => r.type === 'image').map((r) => getRefState(r).uri)[0],
-                        media_id: job.cross_job_id
-                    }
-                }
-
-                let PRINT_DEBUG = false;
-                if (job.worker_type === 'vlm') {
-                    const images = _resources?.filter(r => r.type === 'image').map((r) => ({
-                        type: "image",
-                        image: getRefState(r).uri
-                    }));
-                    const user_text = _resources?.filter(r => r.type === 'text' && r.kind === 'user_text').map((r) => (r as { type: 'text', content: string }).content)[0];
-                    const system_prompt = _resources?.filter(r => r.type === 'text' && r.kind === 'system_prompt').map((r) => (r as { type: 'text', content: string }).content)[0];
-
-                    const messages = [];
-                    if (system_prompt) {
-                        messages.push({
-                            role: "system",
-                            content: [{ type: "text", text: system_prompt }]
-                        });
-                    }
-
-                    const user_content: any[] = [...(images || [])];
-                    if (user_text) {
-                        user_content.push({ type: "text", text: user_text });
-                    }
-
-                    messages.push({
-                        role: "user",
-                        content: user_content
-                    });
-
-                    job_data = {
-                        messages
-                    }
-
-                    if (system_prompt) PRINT_DEBUG = true;
-                }
-
-                if (PRINT_DEBUG) {
-                    console.log("Submit VLM job");
-                }
-
-                if (!job_data) {
-                    console.error("Invalid job type:", job.worker_type);
-                    ws.close(1009, "Invalid job type");
-                    return;
-                }
-
-                job_data.cross_job_id = job.cross_job_id;
+                // Resolve ResourceRefs in job.input to actual file paths/content
+                const resolvedInput = resolveResourceRefs(job.input);
+                
+                // Minimal handler: just pass resolved input to worker
+                const job_data = {
+                    ...resolvedInput,
+                };
 
                 sendJob(job_data, job.worker_type, {
                     async cont(output) {
@@ -329,13 +320,21 @@ async function handle__serverMessage(props: {
                             job_id: job.job_id,
                         }
 
-                        if (PRINT_DEBUG) {
-                            console.log("VLM job output:", JSON.stringify(output, null, 2));
-                        }
                         const encoded = encode(msg);
                         client.ws.send(encoded);
-                        for (const resource of job.resources || []) {
-                            unref(resource.id);
+                        
+                        // Cleanup: find and unref all resources used in this job's input
+                        const collectResourceIds = (obj: any): string[] => {
+                            if (!obj) return [];
+                            if (obj.__type === 'resource-ref') return [obj.id];
+                            if (Array.isArray(obj)) return obj.flatMap(collectResourceIds);
+                            if (typeof obj === 'object') return Object.values(obj).flatMap(collectResourceIds);
+                            return [];
+                        };
+                        
+                        const resourceIds = collectResourceIds(job.input);
+                        for (const resourceId of resourceIds) {
+                            unref(resourceId);
                         }
                     }
                 });

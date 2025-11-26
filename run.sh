@@ -46,10 +46,10 @@ tmux new-window -t "$SESSION" -n worker_fast_embedding
 FAST_EMBEDDING_CMD="WORKER_TYPE=\"fast_embedding\" MAX_LATENCY_MS=\"200\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_embedding"
 tmux send-keys -t "$SESSION:worker_fast_embedding" "cd \"$PROJECT_DIR/py\" && $FAST_EMBEDDING_CMD" C-m
 
-# Create and run the object detection worker
-tmux new-window -t "$SESSION" -n worker_object_detection 
-OBJECT_DETECTION_CMD="WORKER_TYPE=\"object_detection\" MAX_LATENCY_MS=\"300\" MAX_BATCH_SIZE=\"64\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_object_detection"
-tmux send-keys -t "$SESSION:worker_object_detection" "cd \"$PROJECT_DIR/py\" && $OBJECT_DETECTION_CMD" C-m
+# # Create and run the object detection worker
+# tmux new-window -t "$SESSION" -n worker_object_detection 
+# OBJECT_DETECTION_CMD="WORKER_TYPE=\"object_detection\" MAX_LATENCY_MS=\"300\" MAX_BATCH_SIZE=\"64\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_object_detection"
+# tmux send-keys -t "$SESSION:worker_object_detection" "cd \"$PROJECT_DIR/py\" && $OBJECT_DETECTION_CMD" C-m
 
 
 # Create and run the llm fast worker
@@ -61,6 +61,11 @@ tmux send-keys -t "$SESSION:worker_llm_fast" "cd \"$PROJECT_DIR/py\" && $LLM_FAS
 tmux new-window -t "$SESSION" -n worker_motion_energy
 MOTION_ENERGY_CMD="WORKER_TYPE=\"motion_energy\" MAX_LATENCY_MS=\"300\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_motion_energy"
 tmux send-keys -t "$SESSION:worker_motion_energy" "cd \"$PROJECT_DIR/py\" && $MOTION_ENERGY_CMD" C-m
+
+# Create and run the video segmentation worker (SAM3)
+tmux new-window -t "$SESSION" -n worker_segmentation
+SEGMENTATION_CMD="WORKER_TYPE=\"segmentation\" MAX_LATENCY_MS=\"500\" uv run --env-file \"$UV_ENV_FILE\" python -m worker_sam3"
+tmux send-keys -t "$SESSION:worker_segmentation" "cd \"$PROJECT_DIR/py\" && $SEGMENTATION_CMD" C-m
 
 # # 
 # tmux new-window -t "$SESSION" -n worker_llm

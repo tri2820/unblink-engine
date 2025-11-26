@@ -4,7 +4,6 @@ import { encode } from 'cbor-x';
 import { logger } from './logger';
 import { createWsMessageHandler } from './src/handle_ws_message';
 import { parseJsonFromString } from './src/utils';
-import type { Moment, Summary } from './engine';
 
 export const ENGINE_VERSION = "1.0.1";
 
@@ -14,10 +13,6 @@ export type MediaUnit = {
     at_time: number,
 }
 
-export type SummaryBuilder = {
-    rolling_summary?: Summary,
-    media_units: MediaUnit[],
-}
 export type Client = {
     id: string;
     ws: ServerWebSocket<unknown>;
@@ -25,7 +20,7 @@ export type Client = {
         tenant_id: string;
         state: {
             [media_id: string]: {
-                // summary_builder: SummaryBuilder
+                // nothing here yet
             }
         }
     }

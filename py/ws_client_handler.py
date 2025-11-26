@@ -80,7 +80,7 @@ async def client_handler(heavy_ai_workload):
                             pool, heavy_ai_workload, task_data
                         )
 
-                        print(f"[Main] Sending result to server: {result}", type(result))
+                        print(f"[Main] Sending result to server:", result, type(result))
                         encoded = dumps({
                             "type": "worker_output",
                             **result
